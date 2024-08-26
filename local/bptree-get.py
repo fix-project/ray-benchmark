@@ -1,25 +1,18 @@
-#import ray
-#ray.init()
-#
-#@ray.remote
-#def f(x):
-#    return x * x
-#
-#futures = [f.remote(i) for i in range(4)]
-#print(ray.get(futures)) # [0, 1, 4, 9]
-
 import base64
 import argparse
 import os
+import time
 
-
-parser = argparse.ArgumentParser("tmp")
+parser = argparse.ArgumentParser("bptree-get")
 parser.add_argument( "fix_path", help="path to .fix repository", type=str)
 args = parser.parse_args()
 fix_path = args.fix_path
 
+prefix_map = {}
+for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
+    prefix_map[filename[:48]] = filename
+
 # Given base16 encoded ValueTreeRef/BlobRef, get the corresponding data
-# TODO: mark this as remote function
 def get_object( handle ):
     raw = base64.b16decode( handle.upper() )
     if raw[30] | 0b11111000 == 0b11111000:
@@ -27,14 +20,14 @@ def get_object( handle ):
         return raw[:size] 
 
     prefix = handle[:48]
-    prefixed = [ filename for filename in os.listdir( os.path.join( fix_path, "data/" ) ) if filename.startswith( prefix ) ]
+    filename = prefix_map[prefix]
 
-    with open( os.path.join( fix_path, "data/", prefixed[0] ), 'rb') as file:
+    with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
         data = file.read()
         return data
 
 def get_entry( data, i ):
-    return base64.b16encode( data[ i * 32: ( i + 1 ) *32 ] ).decode("utf-8").lower()
+    return base64.b16encode( data[ int( i ) * 32: int( i + 1 ) * 32 ] ).decode("utf-8").lower()
 
 def upper_bound( keys, key ):
     for i in range( 0, int( len( keys ) / 4 ) ):
@@ -79,12 +72,19 @@ def bptree_get_good_style( is_odd, curr_level_data, keys_data, key ):
             return bptree_get_good_style( True, get_object( get_entry( curr_level_data, idx + 1 ) ), "", key )
 
 
-bptree_root = os.path.basename( os.readlink( os.path.join( args.fix_path, "labels/root" ) ) ) 
-print( bptree_get_bad_style( bptree_root, 1800 ) )
-print( bptree_get_bad_style( bptree_root, -1132553114 ) )
+bptree_root = os.path.basename( os.readlink( os.path.join( args.fix_path, "labels/tree-root" ) ) ) 
 
-print( bptree_get_good_style( True, get_object( bptree_root ), "" , 1800 ) )
-print( bptree_get_good_style( True, get_object( bptree_root ), "" , -1132553114 ) )
+for i in range( 0, 10 ):
+    start = time.time()
+    bptree_get_bad_style( bptree_root, -1132553114 )
+    end = time.time()
+    print( end - start )
+
+for i in range( 0, 10 ):
+    start = time.time()
+    bptree_get_good_style( True, get_object( bptree_root ), "" , -1132553114 )
+    end = time.time()
+    print( end - start )
 
 
 

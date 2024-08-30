@@ -5,6 +5,7 @@ import base64
 import argparse
 import os
 import time 
+import psutil
 
 parser = argparse.ArgumentParser("bptree-get-ray")
 parser.add_argument( "fix_path", help="path to .fix repository", type=str)
@@ -15,10 +16,14 @@ fix_path = args.fix_path
 class Loader:
     def __init__( self ):
         self.prefix_map = {}
+        self.buffer = {}
+        self.cpu_id = psutil.Process().cpu_num()
+
         for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
             self.prefix_map[filename[:48]] = filename[48:]
 
     def get_object( self, handle ):
+        psutil.Process().cpu_affinity( [self.cpu_id] )
         raw = base64.b16decode( handle.upper() )
         if raw[30] | 0b11111000 == 0b11111000:
             size = raw[30] >> 3
@@ -27,12 +32,20 @@ class Loader:
         prefix = handle[:48]
         filename = prefix + self.prefix_map[prefix]
 
+        if filename in self.buffer:
+            return self.buffer[filename] 
+
         with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
             data = file.read()
+            self.buffer[filename] = data
             return data
+
+    def get_cpuid( self ):
+        return self.cpu_id 
 
 # Create an actor
 loader = Loader.remote()
+cpuid = ray.get( loader.get_cpuid.remote() )
 
 def get_entry( data, i ):
     return base64.b16encode( data[ int(i) * 32: int( i + 1 ) *32 ] ).decode("utf-8").lower()
@@ -46,6 +59,7 @@ def upper_bound( keys, key ):
 
 @ray.remote
 def bptree_get_bad_style( root, key ):
+    psutil.Process().cpu_affinity( [cpuid] )
     curr_level = root
 
     while True:
@@ -65,6 +79,7 @@ def bptree_get_bad_style( root, key ):
 
 @ray.remote
 def bptree_get_good_style( is_odd, curr_level_data, keys_data, key ):
+    psutil.Process().cpu_affinity( [cpuid] )
     if is_odd:
         return bptree_get_good_style.remote( False, curr_level_data, loader.get_object.remote( get_entry( curr_level_data, 0 ) ), key )
     else:
@@ -82,6 +97,7 @@ def bptree_get_good_style( is_odd, curr_level_data, keys_data, key ):
 
 @ray.remote
 def bptree_get_good_style_collect( bptree_root, key ):
+    psutil.Process().cpu_affinity( [cpuid] )
     ref = bptree_get_good_style.remote( True, loader.get_object.remote( bptree_root ), "", key )
     while ( isinstance( ref, ray._raylet.ObjectRef ) ):
         ref = ray.get( ref )

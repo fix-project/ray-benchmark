@@ -80,7 +80,7 @@ def get_entry( data, i ):
 
 def upper_bound( keys, key ):
     for i in range( 0, int( len( keys ) / 4 ) ):
-        x = int.from_bytes( keys[ i * 4:( i + 1 ) * 4 ], byteorder='little', signed=True )
+        x = int.from_bytes( keys[ int(i * 4):int(( i + 1 ) * 4) ], byteorder='little', signed=True )
         if x > key:
             return i;
     return len( keys ) / 4
@@ -95,7 +95,7 @@ def bptree_get_good_style( is_odd, curr_level_data, keys_data, key ):
         idx = upper_bound( keys_data, key )
 
         if isleaf:
-            if ( idx != 0 and int.from_bytes( keys_data[ ( idx - 1 )* 4 : idx * 4 ], byteorder='little', signed=True ) == key ):
+            if ( idx != 0 and int.from_bytes( keys_data[ int(( idx - 1 )* 4) : int(idx * 4) ], byteorder='little', signed=True ) == key ):
                 return get_object( get_entry( curr_level_data, idx ) )
             else:
                 return "Not found"

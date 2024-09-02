@@ -2,6 +2,7 @@ import base64
 import argparse
 import os
 import time 
+import aiofiles
 
 parser = argparse.ArgumentParser("bptree-get-ray")
 parser.add_argument( "fix_path", help="path to .fix repository", type=str)
@@ -33,7 +34,7 @@ class Loader:
         for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
             self.prefix_map[filename[:48]] = filename[48:]
 
-    def get_object( self, handle ):
+    async def get_object( self, handle ):
         raw = base64.b16decode( handle.upper() )
         if raw[30] | 0b11111000 == 0b11111000:
             size = raw[30] >> 3
@@ -45,10 +46,10 @@ class Loader:
         if filename in self.buffer:
             return self.buffer[filename]
 
-        with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
-            data = file.read()
-            self.buffer[filename] = data
-            return data
+        async with aiofiles.open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
+            data = await file.read()
+        self.buffer[filename] = data
+        return data
 
     # Return list of prefixes that are at this loader
     def keys( self ):

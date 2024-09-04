@@ -54,6 +54,27 @@ class Loader:
     def keys( self ):
         return self.prefix_map.keys()
 
+    def set_up( self, key_to_loader_map, index ):
+        self.key_to_loader_map = key_to_loader_map
+        self.index = index
+
+    def get_loader_index( self, handle ):
+        if handle[:48] in key_to_loader_map:
+            return key_to_loader_map[handle[:48]]
+        else:
+            return self.index
+
+    #async def get_remote_object( self, handle ):
+    #    if handle[:48] in key_to_loader_map:
+    #        # Send request to the loader with this key
+    #        loader_index = key_to_loader_map[handle[:48]]
+    #        ref = self.loaders[loader_index].get_object.remote( handle )
+    #        result = await ref
+    #        return result
+    #    else:
+    #        # Send request to local loader
+    #        return self.get_object( handle )
+
 # Create an actor
 loaders = []
 loader_index = 0;
@@ -66,14 +87,18 @@ for node in nodes:
     loaders.append( loader )
     loader_index += 1
 
-def get_object( handle ):
-    if handle[:48] in key_to_loader_map:
-        # Send request to the loader with this key
-        loader_index = key_to_loader_map[handle[:48]]
-    else:
-        # Send request to local loader
-        loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
+loader_index = 0
+for loader in loaders:
+    ray.get( loader.set_up.remote( key_to_loader_map, loader_index ) )
+    loader_index = loader_index + 1
+
+@ray.remote
+def get_object_from_loader( handle, loader_index ):
     return loaders[loader_index].get_object.remote( handle )
+
+def get_object( handle ):
+    local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
+    return get_object_from_loader.remote( handle, loaders[local_loader_index].get_loader_index.remote( handle ) )
 
 def get_entry( data, i ):
     return base64.b16encode( data[ int(i) * 32: int( i + 1 ) *32 ] ).decode("utf-8").lower()
@@ -86,9 +111,13 @@ def upper_bound( keys, key ):
     return len( keys ) / 4
 
 @ray.remote
-def bptree_get_good_style( is_odd, curr_level_data, keys_data, key ):
-    if is_odd:
-        return bptree_get_good_style.remote( False, curr_level_data, get_object( get_entry( curr_level_data, 0 ) ), key )
+def bptree_get_good_style( step, curr_level_data, keys_data, key ):
+    if step == 0:
+        return bptree_get_good_style.remote( 1, curr_level_data, "", key )
+    elif step == 1:
+        return bptree_get_good_style.remote( 2, curr_level_data, get_object( get_entry( curr_level_data, 0 ) ), key )
+    elif step == 2:
+        return bptree_get_good_style.remote( 3, curr_level_data, keys_data, key )
     else:
         isleaf = keys_data[0] == 1
         keys_data = keys_data[1:]
@@ -100,11 +129,11 @@ def bptree_get_good_style( is_odd, curr_level_data, keys_data, key ):
             else:
                 return "Not found"
         else:
-            return bptree_get_good_style.remote( True, get_object( get_entry( curr_level_data, idx + 1 ) ), "", key )
+            return bptree_get_good_style.remote( 0, get_object( get_entry( curr_level_data, idx + 1 ) ), "", key )
 
 @ray.remote
 def bptree_get_good_style_collect( bptree_root, key ):
-    ref = bptree_get_good_style.remote( True, get_object( bptree_root ), "", key )
+    ref = bptree_get_good_style.remote( 0, get_object( bptree_root ), "", key )
     while ( isinstance( ref, ray._raylet.ObjectRef ) ):
         ref = ray.get( ref )
     return ref

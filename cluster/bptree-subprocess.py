@@ -37,22 +37,24 @@ def get_program( program_bucket, program_name, program_path ):
                                config=boto3.session.Config(signature_version='s3v4'),
                                verify=False )
     obj = s3_target.Object( program_bucket, program_name )
-    with open( program_path, 'wb' ) as file:
+    local_executable_path = os.path.join( program_path, program_name )
+    with open( local_executable_path, 'wb' ) as file:
         file.write( obj.get()['Body'].read() )
-    subprocess.check_call(['chmod', '+x', args.program_path])
+    subprocess.check_call(['chmod', '+x', local_executable_path])
+    return local_executable_path
 
 @ray.remote
-def bptree_subprocess( input_json_dump ):
-    #get_program( args.program_bucket, "bptree-get", args.program_path )
-    child = subprocess.Popen( [args.program_path, input_json_dump], stdout=subprocess.PIPE, stderr=subprocess.PIPE )
+def ray_subprocess( executable_path, input_json_dump ):
+    child = subprocess.Popen( [executable_path, input_json_dump], stdout=subprocess.PIPE, stderr=subprocess.PIPE )
     out, err = child.communicate()
-    return child.returncode
+    lastline = out.readlines()[-1]
+    return json.loads( lastline )
 
 start = time.time()
 refs = []
 for node in nodes:
     refs.append( get_program.options(resources={ node: 0.0001 }).remote( args.program_bucket, "bptree-get", args.program_path ) )
-ray.get( refs )
+executable_path = ray.get( refs )[0]
 
 refs = []
 for key in key_list:
@@ -65,7 +67,7 @@ for key in key_list:
             "output_file" : "out-" + str(key)
             }
 
-    refs.append( bptree_subprocess.remote( json.dumps( input ) ) )
+    refs.append( ray_subprocess.remote( executable_path, json.dumps( input ) ) )
 
 ray.get( refs )
 end = time.time()

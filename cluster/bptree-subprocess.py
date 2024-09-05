@@ -21,14 +21,8 @@ with open( args.key_list, 'r' ) as f:
 import ray
 ray.init()
 
-nodes = []
-for key in ray.cluster_resources().keys():
-    if key.startswith( "node:" ) and not( key == "node:__internal_head__" ):
-        nodes.append( key )
-        print( key )
-
 @ray.remote
-def get_program( program_bucket, program_name, program_path ):
+def get_object_from_minio( bucket, name ):
     s3_target = boto3.resource('s3', 
                                endpoint_url='http://localhost:' + str( args.minio_port ) ,
                                aws_access_key_id='minioadmin',
@@ -36,26 +30,23 @@ def get_program( program_bucket, program_name, program_path ):
                                aws_session_token=None,
                                config=boto3.session.Config(signature_version='s3v4'),
                                verify=False )
-    obj = s3_target.Object( program_bucket, program_name )
-    local_executable_path = os.path.join( program_path, program_name )
-    with open( local_executable_path, 'wb' ) as file:
-        file.write( obj.get()['Body'].read() )
-    subprocess.check_call(['chmod', '+x', local_executable_path])
-    return local_executable_path
+
+    obj = s3_target.Object( bucket, name )
+    return obj.get()['Body'].read()
 
 @ray.remote
-def ray_subprocess( executable_path, input_json_dump ):
-    child = subprocess.Popen( [executable_path, input_json_dump], stdout=subprocess.PIPE, stderr=subprocess.PIPE )
+def ray_subprocess( binary, input_json_dump ):
+    local_executable_path = os.path.join( program_path, str( ray.get_runtime_context().get_task_id() ) + "-binary" )
+    with open( local_executable_path, 'wb' ) as file:
+        file.write( binary )
+    subprocess.check_call(['chmod', '+x', local_executable_path])
+    child = subprocess.Popen( [local_executable_path, input_json_dump], stdout=subprocess.PIPE, stderr=subprocess.PIPE )
     out, err = child.communicate()
-    lastline = out.readlines()[-1]
-    return json.loads( lastline )
+    return json.loads( out.splitlines()[-1] ) 
 
 start = time.time()
-refs = []
-for node in nodes:
-    refs.append( get_program.options(resources={ node: 0.0001 }).remote( args.program_bucket, "bptree-get", args.program_path ) )
-executable_path = ray.get( refs )[0]
 
+bptree_get_binary = get_object_from_minio.remote( program_path, program_name )
 refs = []
 for key in key_list:
     input = {
@@ -67,7 +58,7 @@ for key in key_list:
             "output_file" : "out-" + str(key)
             }
 
-    refs.append( ray_subprocess.remote( executable_path, json.dumps( input ) ) )
+    refs.append( ray_subprocess.remote( bptree_get_binary, json.dumps( input ) ) )
 
 ray.get( refs )
 end = time.time()

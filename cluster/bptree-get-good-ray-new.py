@@ -29,7 +29,6 @@ class Loader:
     def __init__( self ):
         # prefix_map maps from handle[:48] to handle[48:]
         self.prefix_map = {}
-        self.buffer = {}
         for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
             self.prefix_map[filename[:48]] = filename[48:]
 
@@ -42,38 +41,37 @@ class Loader:
         prefix = handle[:48]
         filename = prefix + self.prefix_map[prefix]
 
-        if filename in self.buffer:
-            return self.buffer[filename]
-
         with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
             data = file.read()
-        self.buffer[filename] = data
         return data
 
     # Return list of prefixes that are at this loader
     def keys( self ):
         return self.prefix_map.keys()
 
-    def set_up( self, key_to_loader_map, index ):
+    def set_up( self, key_to_loader_map, key_to_loader_map_ref, loaders, index ):
         self.key_to_loader_map = key_to_loader_map
+        self.ref = key_to_loader_map_ref[0]
+        self.loaders = loaders
         self.index = index
 
+    def get_prefix_map_ref( self ):
+        return ray.put( self.key_to_loader_map )
+
     def get_loader_index( self, handle ):
-        if handle[:48] in key_to_loader_map:
-            return key_to_loader_map[handle[:48]]
+        if handle[:48] in self.key_to_loader_map:
+            return self.key_to_loader_map[handle[:48]]
         else:
             return self.index
 
-    #async def get_remote_object( self, handle ):
-    #    if handle[:48] in key_to_loader_map:
-    #        # Send request to the loader with this key
-    #        loader_index = key_to_loader_map[handle[:48]]
-    #        ref = self.loaders[loader_index].get_object.remote( handle )
-    #        result = await ref
-    #        return result
-    #    else:
-    #        # Send request to local loader
-    #        return self.get_object( handle )
+    def get_remote_object( self, handle ):
+        if handle[:48] in self.key_to_loader_map:
+            # Send request to the loader with this key
+            loader_index = self.key_to_loader_map[handle[:48]]
+            return self.loaders[loader_index].get_object.remote( handle )
+        else:
+            # Send request to local loader
+            return self.loaders[self.index].get_object.remote( handle )
 
 # Create an actor
 loaders = []
@@ -87,18 +85,41 @@ for node in nodes:
     loaders.append( loader )
     loader_index += 1
 
+key_to_loader_map_ref = ray.put( key_to_loader_map )
+
 loader_index = 0
+prefix_maps = []
 for loader in loaders:
-    ray.get( loader.set_up.remote( key_to_loader_map, loader_index ) )
+    ray.get( loader.set_up.remote( key_to_loader_map_ref, [key_to_loader_map_ref], loaders, loader_index ) )
+    prefix_maps.append( ray.get( loader.get_prefix_map_ref.remote() ) )
     loader_index = loader_index + 1
+
+key_to_loader_map = {}
 
 @ray.remote
 def get_object_from_loader( handle, loader_index ):
     return loaders[loader_index].get_object.remote( handle )
 
+@ray.remote
+def get_object_from_prefix_map( handle, key_to_loader_map ):
+    if handle[:48] in key_to_loader_map:
+        # Send request to the loader with this key
+        loader_index = key_to_loader_map[handle[:48]]
+        return loaders[loader_index].get_object.remote( handle )
+    else:
+        # Send request to local loader
+        local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
+        return loaders[local_loader_index].get_object.remote( handle )
+
 def get_object( handle ):
     local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
     return get_object_from_loader.remote( handle, loaders[local_loader_index].get_loader_index.remote( handle ) )
+#def get_object( handle ):
+#    local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
+#    return loaders[local_loader_index].get_remote_object.remote( handle )
+#def get_object( handle ):
+#    local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
+#    return get_object_from_prefix_map.remote( handle, prefix_maps[local_loader_index] )
 
 def get_entry( data, i ):
     return base64.b16encode( data[ int(i) * 32: int( i + 1 ) *32 ] ).decode("utf-8").lower()
@@ -140,8 +161,11 @@ def bptree_get_good_style_collect( bptree_root, key ):
 
 bptree_root = os.path.basename( os.readlink( os.path.join( args.fix_path, "labels/tree-root" ) ) ) 
 
+start = time.time()
 refs = []
 for key in key_list:
     refs.append( bptree_get_good_style_collect.remote( bptree_root, key ) )
 
 ray.get( refs )
+end = time.time()
+print( end - start )

@@ -12,6 +12,12 @@ parser.add_argument( "num_of_keys", help="the number of keys to get", type=int)
 parser.add_argument( "minio_port", help="port to minio client", type=int)
 args = parser.parse_args()
 
+key_list = []
+with open( args.key_list, 'r' ) as f:
+    for i in range( 0, args.num_of_keys ):
+        key_list.append( int( f.readline().rstrip() ) )
+fix_path = args.fix_path
+
 import ray
 ray.init()
 
@@ -45,7 +51,6 @@ bptree_root = args.tree_root
 
 @ray.remote
 def bptree_get_bad_style( root, key ):
-    psutil.Process().cpu_affinity( [cpuid] )
     curr_level = root
 
     while True:
@@ -57,14 +62,18 @@ def bptree_get_bad_style( root, key ):
 
         if isleaf:
             if ( idx != 0 and int.from_bytes( keys[ int(( idx - 1 )* 4) : int(idx * 4) ], byteorder='little', signed=True ) == key ):
-                return ray.get( get_object( get_entry( data, idx ) ) )
+                return get_object( get_entry( data, idx ) )
             else:
                 return "Not found"
         else:
             curr_level = get_entry( data, idx + 1 )
 
+start = time.time()
 refs = []
 for key in key_list:
     refs.append( bptree_get_bad_style.remote( bptree_root, key ) )
 
 ray.get( refs )
+
+end = time.time()
+print( end - start )

@@ -24,6 +24,12 @@ with open( args.visited, 'r' ) as f:
 import ray
 ray.init()
 
+nodes = []
+for key in ray.cluster_resources().keys():
+    if key.startswith( "node:" ) and not( key == "node:__internal_head__" ):
+        nodes.append( key )
+        print( key )
+
 def decode( handle ):
     return base64.b16decode( handle.upper() )
 
@@ -39,7 +45,11 @@ class Loader:
             self.prefix_map[filename[:48]] = filename[48:]
 
     def get_object( self, handle ):
-        prefix = encode( handle )
+        if handle[30] | 0b11111000 == 0b11111000:
+            size = handle[30] >> 3
+            return handle[:size] 
+
+        prefix = encode( handle )[:48]
         filename = prefix + self.prefix_map[prefix]
 
         with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
@@ -66,13 +76,13 @@ for node in nodes:
 def get_object( raw, key_to_loader_map ):
     if raw[30] | 0b11111000 == 0b11111000:
         local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
-        return loaders[local_loader_index].remote( raw )
+        return loaders[local_loader_index].get_object.remote( raw )
     else:
         loader_index = key_to_loader_map[raw[:4]]
-        return loaders[loader_index].remote( raw )
+        return loaders[loader_index].get_object.remote( raw )
 
 def get_entry( data, i ):
-    return data[ int(i) * 32: int( i + 1 ) *32 ] )
+    return data[ int(i) * 32: int( i + 1 ) *32 ]
 
 def upper_bound( keys, key ):
     for i in range( 0, int( len( keys ) / 4 ) ):
@@ -86,15 +96,15 @@ def bptree_get_bad_style( root, key ):
     curr_level = root
 
     while True:
-        data = ray.get( get_object( curr_level ) )
-        keys = ray.get( get_object( get_entry( data, 0 ) ) )
+        data = ray.get( get_object( curr_level, key_to_loader_map ) )
+        keys = ray.get( get_object( get_entry( data, 0 ), key_to_loader_map ) )
         isleaf = keys[0] == 1
         keys = keys[1:]
         idx = upper_bound( keys, key )
 
         if isleaf:
             if ( idx != 0 and int.from_bytes( keys[ int(( idx - 1 )* 4) : int(idx * 4) ], byteorder='little', signed=True ) == key ):
-                return ray.get( get_object( get_entry( data, idx ) ) )
+                return ray.get( get_object( get_entry( data, idx ), key_to_loader_map ) )
             else:
                 return "Not found"
         else:
@@ -102,12 +112,11 @@ def bptree_get_bad_style( root, key ):
 
 bptree_root = decode( os.path.basename( os.readlink( os.path.join( args.fix_path, "labels/tree-root" ) ) ) ) 
 
-start = time.time()
+start = time.monotonic()
 refs = []
 for key in key_list:
     refs.append( bptree_get_bad_style.remote( bptree_root, key ) )
 
 ray.get( refs )
-end = time.time()
-
+end = time.monotonic()
 print( end - start )

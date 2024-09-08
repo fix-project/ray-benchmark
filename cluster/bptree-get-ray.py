@@ -4,10 +4,11 @@ import os
 import time 
 
 parser = argparse.ArgumentParser("bptree-get-ray")
-parser.add_argument( "fix_path", help="path to .fix repository", type=str)
-parser.add_argument( "key_list", help="path to list of keys", type=str)
-parser.add_argument( "num_of_keys", help="the number of keys to get", type=int)
-parser.add_argument( "visited", help="list of keys that will be visited", type=str)
+parser.add_argument("style", help="bptree style", type=str)
+parser.add_argument("fix_path", help="path to .fix repository", type=str)
+parser.add_argument("key_list", help="path to list of keys", type=str)
+parser.add_argument("num_of_keys", help="the number of keys to get", type=int)
+parser.add_argument("visited", help="list of keys that will be visited", type=str)
 args = parser.parse_args()
 
 key_list = []
@@ -50,6 +51,10 @@ class Loader:
             return handle[:size] 
 
         prefix = encode( handle )[:48]
+
+        if prefix == "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7":
+            return ""
+
         filename = prefix + self.prefix_map[prefix]
 
         with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
@@ -77,9 +82,12 @@ def get_object( raw, key_to_loader_map ):
     if raw[30] | 0b11111000 == 0b11111000:
         local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
         return loaders[local_loader_index].get_object.remote( raw )
-    else:
+    elif raw[:4] in key_to_loader_map:
         loader_index = key_to_loader_map[raw[:4]]
         return loaders[loader_index].get_object.remote( raw )
+    else:
+        local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
+        return loaders[local_loader_index].get_object.remote( raw )
 
 def get_entry( data, i ):
     return data[ int(i) * 32: int( i + 1 ) *32 ]
@@ -115,13 +123,34 @@ def bptree_get_good_style_collect( bptree_root, key ):
         ref = ray.get( ref )
     return ref
 
+@ray.remote
+def bptree_get_bad_style( root, key ):
+    curr_level = root
+
+    while True:
+        data = ray.get( get_object( curr_level, key_to_loader_map ) )
+        keys = ray.get( get_object( get_entry( data, 0 ), key_to_loader_map ) )
+        isleaf = keys[0] == 1
+        keys = keys[1:]
+        idx = upper_bound( keys, key )
+
+        if isleaf:
+            if ( idx != 0 and int.from_bytes( keys[ int(( idx - 1 )* 4) : int(idx * 4) ], byteorder='little', signed=True ) == key ):
+                return ray.get( get_object( get_entry( data, idx ), key_to_loader_map ) )
+            else:
+                return "Not found"
+        else:
+            curr_level = get_entry( data, idx + 1 )
+
 bptree_root = decode( os.path.basename( os.readlink( os.path.join( args.fix_path, "labels/tree-root" ) ) ) ) 
 
 start = time.monotonic()
 refs = []
 for key in key_list:
-    refs.append( bptree_get_good_style_collect.remote( bptree_root, key ) )
-
+    if ( args.style == "good" ):
+        refs.append( bptree_get_good_style_collect.remote( bptree_root, key ) )
+    else:
+        refs.append( bptree_get_bad_style.remote( bptree_root, key ) )
 ray.get( refs )
 end = time.monotonic()
 print( end - start )

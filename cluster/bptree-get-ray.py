@@ -146,10 +146,11 @@ bptree_root = decode( os.path.basename( os.readlink( os.path.join( args.fix_path
 
 start = time.monotonic()
 refs = []
-for key in key_list:
-    if ( args.style == "good" ):
+if ( args.style == "good" ):
+    for key in key_list:
         refs.append( bptree_get_good_style_collect.remote( bptree_root, key ) )
-    else:
+else:
+    for key in key_list:
         refs.append( bptree_get_bad_style.remote( bptree_root, key ) )
 ray.get( refs )
 end = time.monotonic()

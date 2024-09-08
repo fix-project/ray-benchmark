@@ -1,12 +1,10 @@
 import argparse
 import os
 import time 
-import boto3
 import json
 import subprocess
 
 parser = argparse.ArgumentParser("bptree-get-ray")
-parser.add_argument( "program_bucket", help="minio bucket of programs", type=str)
 parser.add_argument( "program_path", help="", type=str)
 parser.add_argument( "key_list", help="path to list of keys", type=str)
 parser.add_argument( "num_of_keys", help="the number of keys to get", type=int)
@@ -22,21 +20,8 @@ import ray
 ray.init()
 
 @ray.remote
-def get_object_from_minio( bucket, name ):
-    s3_target = boto3.resource('s3', 
-                               endpoint_url='http://localhost:' + str( args.minio_port ) ,
-                               aws_access_key_id='minioadmin',
-                               aws_secret_access_key='minioadmin',
-                               aws_session_token=None,
-                               config=boto3.session.Config(signature_version='s3v4'),
-                               verify=False )
-
-    obj = s3_target.Object( bucket, name )
-    return obj.get()['Body'].read()
-
-@ray.remote
 def ray_subprocess( binary, input_json_dump ):
-    local_executable_path = os.path.join( program_path, str( ray.get_runtime_context().get_task_id() ) + "-binary" )
+    local_executable_path = os.path.join( "/tmp", str( ray.get_runtime_context().get_task_id() ) + "-binary" )
     with open( local_executable_path, 'wb' ) as file:
         file.write( binary )
     subprocess.check_call(['chmod', '+x', local_executable_path])
@@ -46,7 +31,10 @@ def ray_subprocess( binary, input_json_dump ):
 
 start = time.time()
 
-bptree_get_binary = get_object_from_minio.remote( program_path, program_name )
+with open( os.path.join( program_path, "bptree-get-minio" ), 'rb' ) as file:
+    bptree_get_binary = file.read()
+bptree_get_binary_ref = ray.put( bptree_get_binary )
+
 refs = []
 for key in key_list:
     input = {
@@ -57,8 +45,7 @@ for key in key_list:
             "output_bucket" : "bptree-out",
             "output_file" : "out-" + str(key)
             }
-
-    refs.append( ray_subprocess.remote( bptree_get_binary, json.dumps( input ) ) )
+    refs.append( ray_subprocess.remote( bptree_get_binary_ref, json.dumps( input ) ) )
 
 ray.get( refs )
 end = time.time()

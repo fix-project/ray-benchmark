@@ -29,7 +29,8 @@ import ray
 ray.init()
 
 @ray.remote
-def ray_subprocess( binary, input_json_dump ):
+def ray_subprocess( binary_ref, input_json_dump ):
+    binary = ray.get( binary_ref[0] )
     local_executable_path = os.path.join( "/tmp", str( ray.get_runtime_context().get_task_id() ) + "-binary" )
     with open( local_executable_path, 'wb' ) as file:
         file.write( binary )
@@ -41,7 +42,7 @@ def ray_subprocess( binary, input_json_dump ):
 
 start = time.time()
 
-with open( os.path.join( program_path, "wasm-to-c-minio" ), 'rb' ) as file:
+with open( os.path.join( args.program_path, "wasm-to-c-minio" ), 'rb' ) as file:
     wasm_to_c_binary = file.read()
 wasm_to_c_binary_ref = ray.put( wasm_to_c_binary )
 wasm_to_c_input = {
@@ -51,11 +52,11 @@ wasm_to_c_input = {
         "minio_url" : "localhost:" + str( args.minio_port ),
         }
 
-wasm_to_c_output = ray.get( ray_subprocess.remote( wasm_to_c_binary_ref, json.dumps( wasm_to_c_input ) ) )
+wasm_to_c_output = ray.get( ray_subprocess.remote( [wasm_to_c_binary_ref], json.dumps( wasm_to_c_input ) ) )
 
-with open( os.path.join( program_path, "c-to-elf-minio" ), 'rb' ) as file:
+with open( os.path.join( args.program_path, "c-to-elf-minio" ), 'rb' ) as file:
     c_to_elf_binary = file.read()
-c_to_elf_binary_ref = ray.put( wasm_to_c_binary )
+c_to_elf_binary_ref = ray.put( c_to_elf_binary )
 
 refs = []
 for i in range( 0, wasm_to_c_output["output_number"] ):
@@ -64,10 +65,10 @@ for i in range( 0, wasm_to_c_output["output_number"] ):
             "index" : i,
             "minio_url" : "localhost:" + str( args.minio_port ),
             }
-    ref.append( ray_subprocess.remote( c_to_elf_binary_ref, json.dumps( c_to_elf_input ) ) )
+    ref.append( ray_subprocess.remote( [c_to_elf_binary_ref], json.dumps( c_to_elf_input ) ) )
 c_to_elf_outputs = ray.get( refs )
 
-with open( os.path.join( program_path, "link-elfs-minio" ), 'rb' ) as file:
+with open( os.path.join( args.program_path, "link-elfs-minio" ), 'rb' ) as file:
     link_elfs_binary = file.read()
 link_elfs_binary_ref = ray.put( link_elfs_binary )
 
@@ -77,7 +78,7 @@ link_elfs_input = {
         "output_name" : "out-" + args.input_file,
         "minio_url" : "localhost:" + str( args.minio_port ),
         }
-ray.get( ray_subprocess.remote( link_elfs_binary_ref, json.dumps( link_elfs_input ) ) )
+ray.get( ray_subprocess.remote( [link_elfs_binary_ref], json.dumps( link_elfs_input ) ) )
 
 get_object_from_minio( args.output_bucket, "out-" + args.input_file )
 end = time.time()

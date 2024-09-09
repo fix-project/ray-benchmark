@@ -124,10 +124,10 @@ def mapreduce_bad_style( needle, chunk_list, start, end ):
     else:
         split = start + ( end - start ) / 2
         first = mapreduce_bad_style.remote( needle, chunk_list, start, split )
-        second = mapreduce_bad_style.remote( handle, chunk_list, start, split )
+        second = mapreduce_bad_style.remote( handle, chunk_list, split, end )
         x = ray.get( first )
         y = ray.get( second )
-        return reducer_bad_style( first, second )
+        return reducer_bad_style( x, y )
 
 
 start = time.monotonic()

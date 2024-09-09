@@ -20,7 +20,8 @@ import ray
 ray.init()
 
 @ray.remote
-def ray_subprocess( binary, input_json_dump ):
+def ray_subprocess( binary_ref, input_json_dump ):
+    binary = ray.get( binary_ref[0] )
     local_executable_path = os.path.join( "/tmp", str( ray.get_runtime_context().get_task_id() ) + "-binary" )
     with open( local_executable_path, 'wb' ) as file:
         file.write( binary )
@@ -31,7 +32,7 @@ def ray_subprocess( binary, input_json_dump ):
 
 start = time.time()
 
-with open( os.path.join( program_path, "bptree-get-minio" ), 'rb' ) as file:
+with open( os.path.join( args.program_path, "bptree-get-minio" ), 'rb' ) as file:
     bptree_get_binary = file.read()
 bptree_get_binary_ref = ray.put( bptree_get_binary )
 
@@ -45,7 +46,7 @@ for key in key_list:
             "output_bucket" : "bptree-out",
             "output_file" : "out-" + str(key)
             }
-    refs.append( ray_subprocess.remote( bptree_get_binary_ref, json.dumps( input ) ) )
+    refs.append( ray_subprocess.remote( [bptree_get_binary_ref], json.dumps( input ) ) )
 
 ray.get( refs )
 end = time.time()

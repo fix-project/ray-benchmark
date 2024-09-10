@@ -3,6 +3,7 @@ import os
 import time 
 import json
 import subprocess
+import boto3
 
 parser = argparse.ArgumentParser("bptree-get-ray")
 parser.add_argument( "program_path", help="", type=str)
@@ -12,7 +13,6 @@ parser.add_argument( "output_bucket", help="Input file name", type=str )
 parser.add_argument( "minio_port", help="port to minio client", type=int)
 args = parser.parse_args()
 
-@ray.remote
 def get_object_from_minio( bucket, name ):
     s3_target = boto3.resource('s3', 
                                endpoint_url='http://localhost:' + str( args.minio_port ) ,

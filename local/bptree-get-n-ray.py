@@ -17,6 +17,7 @@ n = args.n
 class Loader:
     def __init__( self ):
         self.prefix_map = {}
+        self.visited = set()
         for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
             self.prefix_map[filename[:48]] = filename[48:]
 
@@ -31,11 +32,16 @@ class Loader:
         if prefix == "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7":
             return ""
 
+        self.visited.add( prefix )
+
         filename = prefix + self.prefix_map[prefix]
 
         with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
             data = file.read()
             return data
+
+    def get_visited( self ):
+        return self.visited
 
 # Create an actor
 loader = Loader.remote()

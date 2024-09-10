@@ -40,7 +40,7 @@ def ray_subprocess( binary_ref, input_json_dump ):
     return json.loads( out.splitlines()[-1] ) 
 
 
-start = time.time()
+start = time.monotonic()
 
 with open( os.path.join( args.program_path, "wasm-to-c-minio" ), 'rb' ) as file:
     wasm_to_c_binary = file.read()
@@ -81,6 +81,6 @@ link_elfs_input = {
 ray.get( ray_subprocess.remote( [link_elfs_binary_ref], json.dumps( link_elfs_input ) ) )
 
 get_object_from_minio( args.output_bucket, "out-" + args.input_file )
-end = time.time()
+end = time.monotonic()
 
 print ( end - start )

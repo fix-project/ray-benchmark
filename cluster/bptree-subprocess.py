@@ -19,22 +19,36 @@ with open( args.key_list, 'r' ) as f:
 import ray
 ray.init()
 
+nodes = []
+for key in ray.cluster_resources().keys():
+    if key.startswith( "node:" ) and not( key == "node:__internal_head__" ):
+        nodes.append( key )
+        print( key )
+
 @ray.remote
-def ray_subprocess( binary_ref, input_json_dump ):
+def load_program( binary_ref ):
     binary = ray.get( binary_ref[0] )
-    local_executable_path = os.path.join( "/tmp", str( ray.get_runtime_context().get_task_id() ) + "-binary" )
-    with open( local_executable_path, 'wb' ) as file:
+    with open( "/home/ubuntu/bptree-get", 'wb' ) as file:
         file.write( binary )
-    subprocess.check_call(['chmod', '+x', local_executable_path])
+    subprocess.check_call(['chmod', '+x', "/home/ubuntu/bptree-get"])
+
+@ray.remote
+def ray_subprocess( input_json_dump ):
+    local_executable_path = "/home/ubuntu/bptree-get" 
     child = subprocess.Popen( [local_executable_path, input_json_dump], stdout=subprocess.PIPE, stderr=subprocess.PIPE )
     out, err = child.communicate()
     return json.loads( out.splitlines()[-1] ) 
 
-start = time.time()
+start = time.monotonic()
 
 with open( os.path.join( args.program_path, "bptree-get-minio" ), 'rb' ) as file:
     bptree_get_binary = file.read()
 bptree_get_binary_ref = ray.put( bptree_get_binary )
+
+refs = []
+for node in nodes:
+    refs.append( load_program.options(resources={ node: 0.0001 }).remote( [bptree_get_binary_ref] ) )
+ray.get( refs )
 
 refs = []
 for key in key_list:
@@ -46,9 +60,9 @@ for key in key_list:
             "output_bucket" : "bptree-out",
             "output_file" : "out-" + str(key)
             }
-    refs.append( ray_subprocess.remote( [bptree_get_binary_ref], json.dumps( input ) ) )
+    refs.append( ray_subprocess.remote( json.dumps( input ) ) )
 
 ray.get( refs )
-end = time.time()
+end = time.monotonic()
 
 print ( end - start )

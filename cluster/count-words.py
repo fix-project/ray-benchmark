@@ -12,8 +12,11 @@ args = parser.parse_args()
 
 chunk_list = []
 with open( args.chunks, 'r' ) as f:
-    for i in range( 0, args.num_of_keys ):
-        key_list.append( int( f.readline().rstrip() ) )
+    while True:
+        line = f.readline()
+        if not line:
+            break
+        chunk_list.append( line.rstrip() )
 
 fix_path = args.fix_path
 
@@ -24,7 +27,6 @@ nodes = []
 for key in ray.cluster_resources().keys():
     if key.startswith( "node:" ) and not( key == "node:__internal_head__" ):
         nodes.append( key )
-        print( key )
 
 def decode( handle ):
     return base64.b16decode( handle.upper() )
@@ -40,7 +42,7 @@ class Loader:
     def get_object( self, handle ):
         filename = encode( handle )
 
-        with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
+        with open( os.path.join( fix_path, "data/", filename ), 'rb' ) as file:
             data = file.read()
         return data
 
@@ -71,20 +73,20 @@ def get_object( raw, key_to_loader_map ):
         local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
         return loaders[local_loader_index].get_object.remote( raw )
 
+def count_words_non_remote(needle: bytes, haystack: bytes) -> int:
+    count = 0
+    return haystack.count( needle )
+
 @ray.remote
 def count_words(needle: bytes, haystack: bytes) -> int:
     count = 0
-    if len(needle) <= len(haystack):
-        for i in range(0, len(haystack) - len(needle) + 1):
-            if needle == haystack[i:i+len(needle)]:
-                count += 1
-    return count
+    return haystack.count( needle )
 
 def merge_counts(x, y):
     return x + y
 
 def mapper_good_style( needle, handle ):
-    return count_words.remote( needle, get_object( handle, key_to_loader_map ) )
+    return count_words.remote( needle, get_object( decode( handle ), key_to_loader_map ) )
 
 @ray.remote
 def reducer_good_style( x, y ):
@@ -94,18 +96,18 @@ def reducer_good_style( x, y ):
         return merge_counts( x, y )
 
 def mapper_bad_style( needle, handle ):
-    chunk = ray.get( get_object( handle, key_to_loader_map ) )
-    return count_words( needle, chunk )
+    chunk = ray.get( get_object( decode( handle ), key_to_loader_map ) )
+    return count_words_non_remote( needle, chunk )
 
 def reducer_bad_style( x, y ):
-    return merge_counts( left, right )
+    return merge_counts( x, y )
 
 @ray.remote
-def mapreduce_good_style( needle, chunk_list, start, end ):
+def mapreduce_good_style( needle, chunk_list, start: int, end: int ):
     if ( start == end or start == end - 1 ):
         return mapper_good_style( needle, chunk_list[start] )
     else:
-        split = start + ( end - start ) / 2
+        split = start + ( end - start ) // 2
         first = mapreduce_good_style.remote( needle, chunk_list, start, split )
         second = mapreduce_good_style.remote( needle, chunk_list, split, end )
         return reducer_good_style.remote( first, second )
@@ -118,13 +120,13 @@ def mapreduce_good_style_collect( needle, chunk_list ):
     return ref
 
 @ray.remote
-def mapreduce_bad_style( needle, chunk_list, start, end ):
+def mapreduce_bad_style( needle, chunk_list, start: int, end: int ):
     if ( start == end or start == end - 1 ):
         return mapper_bad_style( needle, chunk_list[start] )
     else:
-        split = start + ( end - start ) / 2
+        split = start + ( end - start ) // 2
         first = mapreduce_bad_style.remote( needle, chunk_list, start, split )
-        second = mapreduce_bad_style.remote( handle, chunk_list, split, end )
+        second = mapreduce_bad_style.remote( needle, chunk_list, split, end )
         x = ray.get( first )
         y = ray.get( second )
         return reducer_bad_style( x, y )
@@ -132,10 +134,8 @@ def mapreduce_bad_style( needle, chunk_list, start, end ):
 
 start = time.monotonic()
 if ( args.style == "good" ):
-    ray.get( mapreduce_good_style_collect.remote( args.needle, chunk_list ) )
+    print( ray.get( mapreduce_good_style_collect.remote( str.encode( args.needle ), chunk_list ) ) )
 else:
-    ray.get( mapreduce_bad_style.remote( args.needle, chunk_list, 0, len( chunk_list ) ) )
+    print( ray.get( mapreduce_bad_style.remote( str.encode( args.needle ), chunk_list, 0, len( chunk_list ) ) ) )
 end = time.monotonic()
 print( end - start )
-    
-

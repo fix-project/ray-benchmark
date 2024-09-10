@@ -81,14 +81,19 @@ for node in nodes:
 
 def get_object( raw, key_to_loader_map ):
     if raw[30] | 0b11111000 == 0b11111000:
-        local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
-        return loaders[local_loader_index].get_object.remote( raw )
+        size = raw[30] >> 3
+        return raw[:size] 
     elif raw[:4] in key_to_loader_map:
         loader_index = key_to_loader_map[raw[:4]]
         return loaders[loader_index].get_object.remote( raw )
     else:
-        local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
-        return loaders[local_loader_index].get_object.remote( raw )
+        return ""
+
+def get_object_deref( raw, key_to_loader_map ):
+    result = get_object( raw, key_to_loader_map )
+    if ( isinstance( result, ray._raylet.ObjectRef ) ):
+        result = ray.get( result )
+    return result
 
 def get_entry( data, i ):
     return data[ int(i) * 32: int( i + 1 ) *32 ]
@@ -157,8 +162,8 @@ def bptree_get_n_bad_style( root, key ):
     curr_level = root
 
     while True:
-        data = ray.get( get_object( curr_level, key_to_loader_map ) )
-        keys = ray.get( get_object( get_entry( data, 0 ), key_to_loader_map ) )
+        data = get_object_deref( curr_level, key_to_loader_map )
+        keys = get_object_deref( get_entry( data, 0 ), key_to_loader_map )
         isleaf = keys[0] == 1
         keys = keys[1:]
         idx = upper_bound( keys, key )
@@ -174,8 +179,8 @@ def bptree_get_n_bad_style( root, key ):
                 
                 for i in range( 1, args.n ):
                     leaf_node = []
-                    data = ray.get( get_object( get_entry( data, int( len( data ) // 32 ) - 1 ), key_to_loader_map ) )
-                    for j in range( 1, int( len( data ) / 32 ) - 1 ):
+                    data = get_object_deref( get_entry( data, int( len( data ) // 32 ) - 1 ), key_to_loader_map )
+                    for j in range( 1, int( len( data ) // 32 ) - 1 ):
                         leaf_node.append( get_object( get_entry( data, j ), key_to_loader_map ) )
                     leaf_nodes.append( leaf_node )
 

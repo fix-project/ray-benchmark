@@ -80,14 +80,19 @@ for node in nodes:
 
 def get_object( raw, key_to_loader_map ):
     if raw[30] | 0b11111000 == 0b11111000:
-        local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
-        return loaders[local_loader_index].get_object.remote( raw )
+        size = raw[30] >> 3
+        return raw[:size] 
     elif raw[:4] in key_to_loader_map:
         loader_index = key_to_loader_map[raw[:4]]
         return loaders[loader_index].get_object.remote( raw )
     else:
-        local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
-        return loaders[local_loader_index].get_object.remote( raw )
+        return ""
+
+def get_object_deref( raw, key_to_loader_map ):
+    result = get_object( raw, key_to_loader_map )
+    if ( isinstance( result, ray._raylet.ObjectRef ) ):
+        result = ray.get( result )
+    return result
 
 def get_entry( data, i ):
     return data[ int(i) * 32: int( i + 1 ) *32 ]
@@ -128,15 +133,15 @@ def bptree_get_bad_style( root, key ):
     curr_level = root
 
     while True:
-        data = ray.get( get_object( curr_level, key_to_loader_map ) )
-        keys = ray.get( get_object( get_entry( data, 0 ), key_to_loader_map ) )
+        data = get_object_deref( curr_level, key_to_loader_map )
+        keys = get_object_deref( get_entry( data, 0 ), key_to_loader_map )
         isleaf = keys[0] == 1
         keys = keys[1:]
         idx = upper_bound( keys, key )
 
         if isleaf:
             if ( idx != 0 and int.from_bytes( keys[ int(( idx - 1 )* 4) : int(idx * 4) ], byteorder='little', signed=True ) == key ):
-                return ray.get( get_object( get_entry( data, idx ), key_to_loader_map ) )
+                return get_object_deref( get_entry( data, idx ), key_to_loader_map )
             else:
                 return "Not found"
         else:

@@ -94,11 +94,11 @@ def get_entry( data, i ):
     return data[ int(i) * 32: int( i + 1 ) *32 ]
 
 def upper_bound( keys, key ):
-    for i in range( 0, int( len( keys ) / 4 ) ):
+    for i in range( 0, int( len( keys ) // 4 ) ):
         x = int.from_bytes( keys[ int(i * 4):int(( i + 1 ) * 4) ], byteorder='little', signed=True )
         if x > key:
             return i;
-    return len( keys ) / 4
+    return len( keys ) // 4
 
 @ray.remote
 def bptree_get_leaf_nodes( acc, curr_level_data, n, key_to_loader_map ):
@@ -106,19 +106,19 @@ def bptree_get_leaf_nodes( acc, curr_level_data, n, key_to_loader_map ):
         return acc
 
     leaf_node = []
-    for i in range( 1, int( len( curr_level_data ) / 32 ) - 1 ):
+    for i in range( 1, int( len( curr_level_data ) // 32 ) - 1 ):
         leaf_node.append( get_object( get_entry( curr_level_data, i ), key_to_loader_map ) )
     acc.append( leaf_node )
 
     if len( acc ) >= n:
         return acc
     else:
-        return bptree_get_leaf_nodes.remote( acc, get_object( get_entry( curr_level_data, int( len( curr_level_data ) / 32 ) - 1 ), key_to_loader_map ), n, key_to_loader_map )
+        return bptree_get_leaf_nodes.remote( acc, get_object( get_entry( curr_level_data, int( len( curr_level_data ) // 32 ) - 1 ), key_to_loader_map ), n, key_to_loader_map )
 
 @ray.remote
 def bptree_get_n_good_style( is_odd, curr_level_data, keys_data, key, n ):
     if is_odd:
-        return bptree_get_n_good_style.remote( False, curr_level_data, get_object( get_entry( curr_level_data, 0 ), key_to_loader_map ), key )
+        return bptree_get_n_good_style.remote( False, curr_level_data, get_object( get_entry( curr_level_data, 0 ), key_to_loader_map ), key, n )
     else:
         isleaf = keys_data[0] == 1
         keys_data = keys_data[1:]
@@ -129,16 +129,16 @@ def bptree_get_n_good_style( is_odd, curr_level_data, keys_data, key, n ):
                 leaf_nodes = []
                 leaf_node = []
 
-                for i in range( idx, int( len( curr_level_data ) / 32 ) - 1 ):
+                for i in range( idx, int( len( curr_level_data ) // 32 ) - 1 ):
                     leaf_node.append( get_object( get_entry( curr_level_data, i ), key_to_loader_map ) )
                 leaf_nodes.append( leaf_node )
 
                 if n > 1:
-                    return bptree_get_leaf_nodes.remote( leaf_nodes, get_object( get_entry( curr_level_data, int( len( curr_level_data ) / 32 ) - 1 ), key_to_loader_map ), n, key_to_loader_map )
+                    return bptree_get_leaf_nodes.remote( leaf_nodes, get_object( get_entry( curr_level_data, int( len( curr_level_data ) // 32 ) - 1 ), key_to_loader_map ), n, key_to_loader_map )
             else:
                 return "Not found"
         else:
-            return bptree_get_n_good_style.remote( True, get_object( get_entry( curr_level_data, idx + 1 ), key_to_loader_map ), "", key )
+            return bptree_get_n_good_style.remote( True, get_object( get_entry( curr_level_data, idx + 1 ), key_to_loader_map ), "", key, n )
 
 @ray.remote
 def bptree_get_n_good_style_collect( bptree_root, key ):
@@ -168,19 +168,19 @@ def bptree_get_n_bad_style( root, key ):
                 leaf_nodes = []
                 leaf_node = []
 
-                for i in range( idx, int( len( data ) / 32 ) - 1 ):
+                for i in range( idx, int( len( data ) // 32 ) - 1 ):
                     leaf_node.append( get_object( get_entry( data, i ), key_to_loader_map ) )
                 leaf_nodes.append( leaf_node )
                 
                 for i in range( 1, args.n ):
                     leaf_node = []
-                    data = ray.get( get_object( get_entry( data, int( len( data ) / 32 ) - 1 ), key_to_loader_map ) )
+                    data = ray.get( get_object( get_entry( data, int( len( data ) // 32 ) - 1 ), key_to_loader_map ) )
                     for j in range( 1, int( len( data ) / 32 ) - 1 ):
                         leaf_node.append( get_object( get_entry( data, j ), key_to_loader_map ) )
                     leaf_nodes.append( leaf_node )
 
                 leaf_data = []
-                for i in range( 0, n ):
+                for i in range( 0, args.n ):
                     leaf_data.append( ray.get( leaf_nodes[i] ) )
 
                 return leaf_data

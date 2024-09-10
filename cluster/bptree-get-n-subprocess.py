@@ -3,6 +3,7 @@ import os
 import time 
 import json
 import subprocess
+import boto3
 
 parser = argparse.ArgumentParser("bptree-get-n-ray")
 parser.add_argument( "program_path", help="", type=str)
@@ -81,7 +82,7 @@ ray.get( refs )
 
 refs = []
 for key in key_list:
-    refs.append( get_object_from_minio.remote( "bptree-n-out", "out-" + str( key ) )
+    refs.append( get_object_from_minio.remote( "bptree-n-out", "out-" + str( key ) ) )
 ray.get( refs )
 
 end = time.monotonic()

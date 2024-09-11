@@ -81,12 +81,12 @@ for node in nodes:
 def get_object( raw, key_to_loader_map ):
     if raw[30] | 0b11111000 == 0b11111000:
         size = raw[30] >> 3
-        return raw[:size] 
+        return ray.put( raw[:size] )
     elif raw[:4] in key_to_loader_map:
         loader_index = key_to_loader_map[raw[:4]]
         return loaders[loader_index].get_object.remote( raw )
     else:
-        return ""
+        return ray.put( "" )
 
 def get_object_deref( raw, key_to_loader_map ):
     result = get_object( raw, key_to_loader_map )
@@ -115,7 +115,7 @@ def bptree_get_good_style( is_odd, curr_level_data, keys_data, key ):
 
         if isleaf:
             if ( idx != 0 and int.from_bytes( keys_data[ int(( idx - 1 )* 4) : int(idx * 4) ], byteorder='little', signed=True ) == key ):
-                return get_object( get_entry( curr_level_data, idx ), key_to_loader_map )
+                return ray.get( get_object( get_entry( curr_level_data, idx ), key_to_loader_map ) )
             else:
                 return "Not found"
         else:

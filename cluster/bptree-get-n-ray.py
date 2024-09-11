@@ -82,12 +82,12 @@ for node in nodes:
 def get_object( raw, key_to_loader_map ):
     if raw[30] | 0b11111000 == 0b11111000:
         size = raw[30] >> 3
-        return raw[:size] 
+        return ray.put( raw[:size] )
     elif raw[:4] in key_to_loader_map:
         loader_index = key_to_loader_map[raw[:4]]
         return loaders[loader_index].get_object.remote( raw )
     else:
-        return ""
+        return ray.put( "" )
 
 def get_object_deref( raw, key_to_loader_map ):
     result = get_object( raw, key_to_loader_map )
@@ -116,7 +116,10 @@ def bptree_get_leaf_nodes( acc, curr_level_data, n, key_to_loader_map ):
     acc.append( leaf_node )
 
     if len( acc ) >= n:
-        return acc
+        data = []
+        for node in acc:
+            data.append( ray.get( node ) )
+        return data
     else:
         return bptree_get_leaf_nodes.remote( acc, get_object( get_entry( curr_level_data, int( len( curr_level_data ) // 32 ) - 1 ), key_to_loader_map ), n, key_to_loader_map )
 
@@ -151,11 +154,7 @@ def bptree_get_n_good_style_collect( bptree_root, key ):
     while ( isinstance( ref, ray._raylet.ObjectRef ) ):
         ref = ray.get( ref )
 
-    data = []
-    for d in ref:
-        data.append( ray.get( d ) )
-
-    return data
+    return ref 
 
 @ray.remote
 def bptree_get_n_bad_style( root, key ):

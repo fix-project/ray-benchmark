@@ -44,22 +44,36 @@ class Loader:
         self.prefix_map = {}
         for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
             self.prefix_map[filename[:48]] = filename[48:]
+        self.empty_tree = decode( "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7" )
+        self.empty_ref = ray.put( "" )
+        self.refs = []
 
-    def get_object( self, handle ):
+    def to_handle( self, handle ):
         if handle[30] | 0b11111000 == 0b11111000:
             size = handle[30] >> 3
-            return handle[:size] 
+            ref = ray.put( handle[:size] )
+            self.refs.append( ref )
+            return ref
 
+        if handle[:24] == self.empty_tree:
+            return self.empty_ref
+
+        return ( handle, self.key_to_loader_map.get( handle[:4], -1 ) )
+
+    def get_object( self, handle ):
         prefix = encode( handle )[:48]
-
-        if prefix == "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7":
-            return ""
-
         filename = prefix + self.prefix_map[prefix]
-
         with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
             data = file.read()
-        return data
+
+        handles = []
+        for i in range( 0, len( data ) // 32 ):
+            handles.append( self.to_handle( data[ int(i) * 32: int( i + 1 ) *32 ] ) )
+        
+        return handles
+
+    def set_map( self, key_to_loader_map ):
+        self.key_to_loader_map = key_to_loader_map
 
     # Return list of prefixes that are at this loader
     def keys( self ):
@@ -69,7 +83,7 @@ loaders = []
 loader_index = 0;
 key_to_loader_map = {}
 for node in nodes:
-    loader = Loader.options(resources={ node : 0.0001 }).remote()
+    loader = Loader.options(resources={ node : 0.0001 }, max_concurrency=4).remote()
     keys = ray.get( loader.keys.remote() )
     for key in keys:
         if key in visited_list:
@@ -78,36 +92,35 @@ for node in nodes:
     loaders.append( loader )
     loader_index += 1
 
-def get_object( raw, key_to_loader_map ):
-    if raw[30] | 0b11111000 == 0b11111000:
-        size = raw[30] >> 3
-        return ray.put( raw[:size] )
-    elif raw[:4] in key_to_loader_map:
-        loader_index = key_to_loader_map[raw[:4]]
-        return loaders[loader_index].get_object.remote( raw )
-    else:
-        return ray.put( "" )
+refs = []
+for loader in loaders:
+    refs.append( loader.set_map.remote( key_to_loader_map ) )
+ray.get( refs )
 
-def get_object_deref( raw, key_to_loader_map ):
-    result = get_object( raw, key_to_loader_map )
-    if ( isinstance( result, ray._raylet.ObjectRef ) ):
-        result = ray.get( result )
-    return result
+def get_object( raw ):
+    if ( isinstance( raw, ray._raylet.ObjectRef ) ):
+        return raw
+    else:
+        loader_index = raw[1] 
+        return loaders[raw[1]].get_object.remote( raw[0] )
+
+def get_object_deref( raw ):
+    return ray.get( get_object( raw ) )
 
 def get_entry( data, i ):
-    return data[ int(i) * 32: int( i + 1 ) *32 ]
+    return data[ int( i ) ]
 
 def upper_bound( keys, key ):
-    for i in range( 0, int( len( keys ) / 4 ) ):
+    for i in range( 0, int( len( keys ) // 4 ) ):
         x = int.from_bytes( keys[ int(i * 4):int(( i + 1 ) * 4) ], byteorder='little', signed=True )
         if x > key:
             return i;
-    return len( keys ) / 4
+    return len( keys ) // 4
 
 @ray.remote
 def bptree_get_good_style( is_odd, curr_level_data, keys_data, key ):
     if is_odd:
-        return bptree_get_good_style.remote( False, curr_level_data, get_object( get_entry( curr_level_data, 0 ), key_to_loader_map ), key )
+        return bptree_get_good_style.remote( False, curr_level_data, get_object( get_entry( curr_level_data, 0 ) ), key )
     else:
         isleaf = keys_data[0] == 1
         keys_data = keys_data[1:]
@@ -115,15 +128,15 @@ def bptree_get_good_style( is_odd, curr_level_data, keys_data, key ):
 
         if isleaf:
             if ( idx != 0 and int.from_bytes( keys_data[ int(( idx - 1 )* 4) : int(idx * 4) ], byteorder='little', signed=True ) == key ):
-                return ray.get( get_object( get_entry( curr_level_data, idx ), key_to_loader_map ) )
+                return get_object( get_entry( curr_level_data, idx ) )
             else:
                 return "Not found"
         else:
-            return bptree_get_good_style.remote( True, get_object( get_entry( curr_level_data, idx + 1 ), key_to_loader_map ), "", key )
+            return bptree_get_good_style.remote( True, get_object( get_entry( curr_level_data, idx + 1 ) ), "", key )
 
 @ray.remote
 def bptree_get_good_style_collect( bptree_root, key ):
-    ref = bptree_get_good_style.remote( True, get_object( bptree_root, key_to_loader_map ), "", key )
+    ref = bptree_get_good_style.remote( True, get_object( bptree_root ), "", key )
     while ( isinstance( ref, ray._raylet.ObjectRef ) ):
         ref = ray.get( ref )
     return ref
@@ -133,21 +146,22 @@ def bptree_get_bad_style( root, key ):
     curr_level = root
 
     while True:
-        data = get_object_deref( curr_level, key_to_loader_map )
-        keys = get_object_deref( get_entry( data, 0 ), key_to_loader_map )
+        data = get_object_deref( curr_level )
+        keys = get_object_deref( get_entry( data, 0 ) )
         isleaf = keys[0] == 1
         keys = keys[1:]
         idx = upper_bound( keys, key )
 
         if isleaf:
             if ( idx != 0 and int.from_bytes( keys[ int(( idx - 1 )* 4) : int(idx * 4) ], byteorder='little', signed=True ) == key ):
-                return get_object_deref( get_entry( data, idx ), key_to_loader_map )
+                return get_object_deref( get_entry( data, idx ) )
             else:
                 return "Not found"
         else:
             curr_level = get_entry( data, idx + 1 )
 
-bptree_root = decode( os.path.basename( os.readlink( os.path.join( args.fix_path, "labels/tree-root" ) ) ) ) 
+bptree_root_raw = decode( os.path.basename( os.readlink( os.path.join( args.fix_path, "labels/tree-root" ) ) ) ) 
+bptree_root = ( bptree_root_raw, key_to_loader_map[bptree_root_raw[:4]] )
 
 start = time.monotonic()
 refs = []

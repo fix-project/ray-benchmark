@@ -102,14 +102,13 @@ def mapper_bad_style( needle, handle ):
 def reducer_bad_style( x, y ):
     return merge_counts( x, y )
 
-@ray.remote
 def mapreduce_good_style( needle, chunk_list, start: int, end: int ):
     if ( start == end or start == end - 1 ):
         return mapper_good_style( needle, chunk_list[start] )
     else:
         split = start + ( end - start ) // 2
-        first = mapreduce_good_style.remote( needle, chunk_list, start, split )
-        second = mapreduce_good_style.remote( needle, chunk_list, split, end )
+        first = mapreduce_good_style( needle, chunk_list, start, split )
+        second = mapreduce_good_style( needle, chunk_list, split, end )
         return reducer_good_style.remote( first, second )
 
 @ray.remote

@@ -90,6 +90,18 @@ def load_program_to_every_node( binary_ref, program_name ):
     return ray.get( refs )[0]
 
 @ray.remote
+def cleanup(program_path):
+    for p in program_path:
+        if os.path.exists( program_path ):
+            subprocess.check_call(['rm', program_path])
+
+def cleanup_every_node(program_path):
+    refs = []
+    for node in nodes:
+        refs.append( cleanup.options(resources={ node: 0.0001 }).remote( program_path ) )
+    ray.get( refs )
+            
+@ray.remote
 def do_compile():
     if not args.ondemand:
         program_creation_start = time.monotonic()
@@ -143,3 +155,5 @@ ray.get( do_compile.remote() )
 end = time.monotonic()
 
 print ( end - start )
+
+cleanup_every_node(["/home/ubuntu/wasm-to-c", "/home/ubuntu/c-to-elf", "/home/ubuntu/link-elfs"])

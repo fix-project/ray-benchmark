@@ -73,15 +73,12 @@ def get_object( raw, key_to_loader_map ):
         local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
         return loaders[local_loader_index].get_object.remote( raw )
 
-def count_words_non_remote(needle: bytes, haystack: bytes) -> int:
-    count = 0
-    return haystack.count( needle )
-
 @ray.remote
 def count_words(needle: bytes, haystack: bytes) -> int:
     count = 0
     return haystack.count( needle )
 
+@ray.remote
 def merge_counts(x, y):
     return x + y
 
@@ -93,14 +90,14 @@ def reducer_good_style( x, y ):
     if ( isinstance( x, ray._raylet.ObjectRef ) or isinstance( y, ray._raylet.ObjectRef ) ):
         return reducer_good_style.remote( x, y )
     else:
-        return merge_counts( x, y )
+        return merge_counts.remote( x, y )
 
 def mapper_bad_style( needle, handle ):
     chunk = ray.get( get_object( decode( handle ), key_to_loader_map ) )
-    return count_words_non_remote( needle, chunk )
+    return ray.get( count_words.remote( needle, chunk ) )
 
 def reducer_bad_style( x, y ):
-    return merge_counts( x, y )
+    return ray.get( merge_counts.remote( x, y ) )
 
 def mapreduce_good_style( needle, chunk_list, start: int, end: int ):
     if ( start == end or start == end - 1 ):

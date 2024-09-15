@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage:./run.sh style path-to-bptree-fix key-to-look-up max-n
+# Usage:./run.sh <style> <path-to-bptree-fix> <key-list> <num-keys> <max-n>
 
 if [ "$#" -ne 5 ]; then
   echo "Usage: $0 <style> <path-to-bptree-fix> <key-list> <num-keys> <max-n>"

@@ -24,13 +24,14 @@ for key in ray.cluster_resources().keys():
 
 @ray.remote
 def load_program( binary_ref, program_name ):
-    binary = ray.get( binary_ref[0] )
+    binary = ray.get( ray.get( binary_ref[0] ) )
     binary_path = os.path.join( "/home/ubuntu", program_name )
     with open( binary_path, 'wb' ) as file:
         file.write( binary )
     subprocess.check_call(['chmod', '+x', binary_path])
     return binary_path
 
+@ray.remote
 def ray_subprocess( binary_path, input_json_dump ):
     child = subprocess.Popen( [binary_path, input_json_dump], stdout=subprocess.PIPE, stderr=subprocess.PIPE )
     out, err = child.communicate()
@@ -44,14 +45,14 @@ def mapper( mapper_path, needle, index ):
             "minio_url" : "localhost:" + str( args.minio_port ),
             "query": needle
             }
-    return ray_subprocess( mapper_path, json.dumps( input ) )
+    return ray.get( ray_subprocess.remote( mapper_path, json.dumps( input ) ) )
 
 def reducer( reducer_path, x, y ):
     input = {
             "input_x": x,
             "input_y": y,
             }
-    return ray_subprocess( reducer_path, json.dumps( input ) )
+    return ray.get( ray_subprocess.remote( reducer_path, json.dumps( input ) ) )
 
 @ray.remote
 def mapreduce( mapper_path, reducer_path, needle, start: int, end: int ):
@@ -65,28 +66,27 @@ def mapreduce( mapper_path, reducer_path, needle, start: int, end: int ):
         y = ray.get( second )
         return reducer( reducer_path, x, y )
 
+@ray.remote
+def get_program( program_name ):
+    with open( os.path.join( args.program_path, program_name ), 'rb' ) as file:
+        binary = file.read()
+    return ray.put( binary )
+
+def load_program_to_every_node( binary_ref, program_name ):
+    refs = []
+    for node in nodes:
+        refs.append( load_program.options(resources={ node: 0.0001 }).remote( [binary_ref], program_name ) )
+    return ray.get( refs )[0]
+
+@ray.remote
+def do_countwords():
+    count_words_path = load_program_to_every_node( get_program.options(resources={ "node:172.31.8.132": 0.0001 }).remote("count-words-minio"), "count-words" )
+    merge_counts_path = load_program_to_every_node( get_program.options(resources={ "node:172.31.8.132": 0.0001 }).remote("merge-counts-minio"), "merge-counts" )
+
+    return ray.get( mapreduce.remote( count_words_path, merge_counts_path, args.needle, 0, args.num_chunk ) )
+
 start = time.monotonic()
-
-with open( os.path.join( args.program_path, "count-words-minio" ), 'rb' ) as file:
-    count_words_binary = file.read()
-count_words_binary_ref = ray.put( count_words_binary )
-
-refs = []
-for node in nodes:
-    refs.append( load_program.options(resources={ node: 0.0001 }).remote( [count_words_binary_ref], "count-words" ) )
-count_words_path = ray.get( refs )[0]
-
-with open( os.path.join( args.program_path, "merge-counts-minio" ), 'rb' ) as file:
-    merge_counts_binary = file.read()
-merge_count_binary_ref = ray.put( merge_counts_binary )
-
-refs = []
-for node in nodes:
-    refs.append( load_program.options(resources={ node: 0.0001 }).remote( [merge_count_binary_ref], "merge-counts" ) )
-merge_counts_path = ray.get( refs )[0]
-
-print( ray.get( mapreduce.remote( count_words_path, merge_counts_path, args.needle, 0, args.num_chunk ) ) )
-
+ray.get( do_countwords.remote() ) 
 end = time.monotonic()
 
 print( end - start )

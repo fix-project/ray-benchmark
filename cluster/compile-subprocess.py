@@ -13,6 +13,10 @@ parser.add_argument( "output_bucket", help="output bucket name", type=str )
 parser.add_argument( "minio_port", help="port to minio client", type=int)
 args = parser.parse_args()
 
+import ray
+ray.init()
+
+@ray.remote(runtime_env={"pip":["boto3"]})
 def get_object_from_minio( bucket, name ):
     s3_target = boto3.resource('s3', 
                                endpoint_url='http://localhost:' + str( args.minio_port ) ,
@@ -25,9 +29,6 @@ def get_object_from_minio( bucket, name ):
     obj = s3_target.Object( bucket, name )
     return obj.get()['Body'].read()
 
-import ray
-ray.init()
-
 nodes = []
 for key in ray.cluster_resources().keys():
     if key.startswith( "node:" ) and not( key == "node:__internal_head__" ):
@@ -36,7 +37,7 @@ for key in ray.cluster_resources().keys():
 
 @ray.remote
 def load_program( binary_ref, program_name ):
-    binary = ray.get( binary_ref[0] )
+    binary = ray.get( ray.get( binary_ref[0] ) )
     binary_path = os.path.join( "/home/ubuntu", program_name )
     with open( binary_path, 'wb' ) as file:
         file.write( binary )
@@ -49,63 +50,57 @@ def ray_subprocess( binary_path, input_json_dump ):
     out, err = child.communicate()
     return json.loads( out.splitlines()[-1] ) 
 
-start = time.monotonic()
+@ray.remote
+def get_program( program_name ):
+    with open( os.path.join( args.program_path, program_name ), 'rb' ) as file:
+        binary = file.read()
+    return ray.put( binary )
 
-with open( os.path.join( args.program_path, "wasm-to-c-minio" ), 'rb' ) as file:
-    wasm_to_c_binary = file.read()
-wasm_to_c_binary_ref = ray.put( wasm_to_c_binary )
+def load_program_to_every_node( binary_ref, program_name ):
+    refs = []
+    for node in nodes:
+        refs.append( load_program.options(resources={ node: 0.0001 }).remote( [binary_ref], program_name ) )
+    return ray.get( refs )[0]
 
-refs = []
-for node in nodes:
-    refs.append( load_program.options(resources={ node: 0.0001 }).remote( [wasm_to_c_binary_ref], "wasm-to-c" ) )
-wasm_to_c_path = ray.get( refs )[0]
+@ray.remote
+def do_compile():
+    wasm_to_c_path = load_program_to_every_node( get_program.options(resources={ "node:172.31.8.132": 0.0001 }).remote("wasm-to-c-minio"), "wasm-to-c" )
 
-wasm_to_c_input = {
-        "input_bucket": args.input_bucket,
-        "input_file": args.input_file,
-        "output_bucket": args.output_bucket,
-        "minio_url" : "localhost:" + str( args.minio_port ),
-        }
-
-wasm_to_c_output = ray.get( ray_subprocess.remote( wasm_to_c_path, json.dumps( wasm_to_c_input ) ) )
-
-with open( os.path.join( args.program_path, "c-to-elf-minio" ), 'rb' ) as file:
-    c_to_elf_binary = file.read()
-c_to_elf_binary_ref = ray.put( c_to_elf_binary )
-
-refs = []
-for node in nodes:
-    refs.append( load_program.options(resources={ node: 0.0001 }).remote( [c_to_elf_binary_ref], "c-to-elf" ) )
-c_to_elf_binary_path = ray.get( refs )[0]
-
-refs = []
-for i in range( 0, wasm_to_c_output["output_number"] ):
-    c_to_elf_input = {
-            "bucket": args.output_bucket,
-            "index" : i,
+    wasm_to_c_input = {
+            "input_bucket": args.input_bucket,
+            "input_file": args.input_file,
+            "output_bucket": args.output_bucket,
             "minio_url" : "localhost:" + str( args.minio_port ),
             }
-    refs.append( ray_subprocess.remote( c_to_elf_binary_path, json.dumps( c_to_elf_input ) ) )
-c_to_elf_outputs = ray.get( refs )
 
-with open( os.path.join( args.program_path, "link-elfs-minio" ), 'rb' ) as file:
-    link_elfs_binary = file.read()
-link_elfs_binary_ref = ray.put( link_elfs_binary )
+    wasm_to_c_output = ray.get( ray_subprocess.remote( wasm_to_c_path, json.dumps( wasm_to_c_input ) ) )
 
-refs = []
-for node in nodes:
-    refs.append( load_program.options(resources={ node: 0.0001 }).remote( [link_elfs_binary_ref], "link-elfs" ) )
-link_elfs_binary_path = ray.get( refs )[0]
+    c_to_elf_binary_path = load_program_to_every_node( get_program.options(resources={ "node:172.31.8.132": 0.0001 }).remote("c-to-elf-minio"), "c-to-elf" )
 
-link_elfs_input = {
-        "bucket" : args.output_bucket,
-        "last_index" : wasm_to_c_output["output_number"] - 1,
-        "output_name" : "out-" + args.input_file,
-        "minio_url" : "localhost:" + str( args.minio_port ),
-        }
-ray.get( ray_subprocess.remote( link_elfs_binary_path, json.dumps( link_elfs_input ) ) )
+    refs = []
+    for i in range( 0, wasm_to_c_output["output_number"] ):
+        c_to_elf_input = {
+                "bucket": args.output_bucket,
+                "index" : i,
+                "minio_url" : "localhost:" + str( args.minio_port ),
+                }
+        refs.append( ray_subprocess.remote( c_to_elf_binary_path, json.dumps( c_to_elf_input ) ) )
+    c_to_elf_outputs = ray.get( refs )
 
-get_object_from_minio( args.output_bucket, "out-" + args.input_file )
+    link_elfs_binary_path = load_program_to_every_node( get_program.options(resources={ "node:172.31.8.132": 0.0001 }).remote("link-elfs-minio"), "link-elfs" )
+
+    link_elfs_input = {
+            "bucket" : args.output_bucket,
+            "last_index" : wasm_to_c_output["output_number"] - 1,
+            "output_name" : "out-" + args.input_file,
+            "minio_url" : "localhost:" + str( args.minio_port ),
+            }
+    ray.get( ray_subprocess.remote( link_elfs_binary_path, json.dumps( link_elfs_input ) ) )
+
+    return ray.get( get_object_from_minio.remote( args.output_bucket, "out-" + args.input_file ) )
+
+start = time.monotonic()
+ray.get( do_compile.remote() )
 end = time.monotonic()
 
 print ( end - start )

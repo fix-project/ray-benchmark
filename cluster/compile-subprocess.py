@@ -11,6 +11,7 @@ parser.add_argument( "input_bucket", help="Input file bucket name", type=str)
 parser.add_argument( "input_file", help="Input file name", type=str )
 parser.add_argument( "output_bucket", help="output bucket name", type=str )
 parser.add_argument( "minio_port", help="port to minio client", type=int)
+parser.add_argument( "c_file_num", help="Number of c files", type=int )
 args = parser.parse_args()
 
 import ray
@@ -105,27 +106,13 @@ def cleanup_every_node(program_path):
 def do_compile():
     if not args.ondemand:
         program_creation_start = time.monotonic()
-        wasm_to_c_path = load_program_to_every_node( get_program.options(resources={ "node:172.31.8.132": 0.0001 }).remote("wasm-to-c-minio"), "wasm-to-c" )
         c_to_elf_binary_path = load_program_to_every_node( get_program.options(resources={ "node:172.31.8.132": 0.0001 }).remote("c-to-elf-minio"), "c-to-elf" )
         link_elfs_binary_path = load_program_to_every_node( get_program.options(resources={ "node:172.31.8.132": 0.0001 }).remote("link-elfs-minio"), "link-elfs" )
         program_creation_end = time.monotonic()
         print( "Program creation: ", program_creation_end - program_creation_start )
 
-    wasm_to_c_input = {
-            "input_bucket": args.input_bucket,
-            "input_file": args.input_file,
-            "output_bucket": args.output_bucket,
-            "minio_url" : "localhost:" + str( args.minio_port ),
-            }
-
-    if not args.ondemand:
-        wasm_to_c_output = ray.get( ray_subprocess.remote( wasm_to_c_path, json.dumps( wasm_to_c_input ) ) )
-    else:
-        wasm_to_c_output = ray.get( ray_subprocess_on_demand.remote( "wasm-to-c-minio", "wasm-to-c", json.dumps( wasm_to_c_input ) ) )
-
-
     refs = []
-    for i in range( 0, wasm_to_c_output["output_number"] ):
+    for i in range( 0, args.c_file_num ):
         c_to_elf_input = {
                 "bucket": args.output_bucket,
                 "index" : i,
@@ -156,4 +143,4 @@ end = time.monotonic()
 
 print ( end - start )
 
-cleanup_every_node(["/home/ubuntu/wasm-to-c", "/home/ubuntu/c-to-elf", "/home/ubuntu/link-elfs"])
+cleanup_every_node(["/home/ubuntu/c-to-elf", "/home/ubuntu/link-elfs"])

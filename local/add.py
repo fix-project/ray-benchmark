@@ -12,14 +12,18 @@ def make_addend( i ):
     y = i % 254 + 1
     return(x.to_bytes(1,'little'), y.to_bytes(1,'little'))
 
-addends = []
-for i in range(0, 4097):
-    addends.append( make_addend( i ) )
-ray.get( add.remote( addends[4096][0], addends[4096][1] ) )
+@ray.remote
+def do_exp():
+    addends = []
+    for i in range(0, 4097):
+        addends.append( make_addend( i ) )
+    ray.get( add.remote( addends[4096][0], addends[4096][1] ) )
 
-start = time.monotonic()
-for i in range(0, 4096):
-    ray.get( add.remote( addends[i][0], addends[i][1] ) )
-end = time.monotonic()
+    start = time.monotonic()
+    for i in range(0, 4096):
+        ray.get( add.remote( addends[i][0], addends[i][1] ) )
+    end = time.monotonic()
 
-print( ( end - start ) * 1_000_000_000, "ns" )
+    print( ( end - start ) * 1_000_000_000, "ns" )
+
+ray.get( do_exp.remote() )

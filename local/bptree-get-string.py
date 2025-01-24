@@ -30,6 +30,36 @@ def decode( handle ):
 def encode( handle ):
     return base64.b16encode( handle ).decode("utf-8").lower()
 
+# Given base16 encoded ValueTreeRef/BlobRef, get the corresponding data
+def get_object( handle ):
+    prefix = encode( handle )[:48]
+    filename = prefix + self.prefix_map[prefix]
+
+    if ( filename.endswith( '400' ) ):
+        with open( os.path.join( args.fix_path, "data/", filename ), 'r') as file:
+            data = file.read()
+        return data
+
+    with open( os.path.join( args.fix_path, "data/", filename ), 'rb') as file:
+        data = file.read()
+
+    handles = []
+    for i in range( 0, len( data ) // 32 ):
+        handles.append( self.to_handle( data[ int(i) * 32: int( i + 1 ) *32 ] ) )
+    return handles
+def get_object( handle ):
+    raw = base64.b16decode( handle.upper() )
+    if raw[30] | 0b11111000 == 0b11111000:
+        size = raw[30] >> 3
+        return raw[:size] 
+
+    prefix = handle[:48]
+    filename = prefix_map[prefix]
+
+    with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
+        data = file.read()
+        return data
+
 @ray.remote
 class Loader:
     def __init__( self ):
@@ -57,6 +87,11 @@ class Loader:
         prefix = encode( handle )[:48]
         filename = prefix + self.prefix_map[prefix]
 
+        if ( filename.endswith( '400' ) ):
+            with open( os.path.join( args.fix_path, "data/", filename ), 'r') as file:
+                data = file.read()
+            return data
+
         with open( os.path.join( args.fix_path, "data/", filename ), 'rb') as file:
             data = file.read()
 
@@ -68,23 +103,24 @@ class Loader:
 # Create an actor
 loader = Loader.remote()
 
+# def get_object( raw ):
+#     if ( isinstance( raw, ray._raylet.ObjectRef ) ):
+#         return raw
+#     else:
+#         return loader.get_object.remote( raw )
+
+def get_object_deref( raw ):
+    return ray.get( get_object( raw ) )
+
 def get_entry( data, i ):
-    return base64.b16encode( data[ int(i) * 32: int( i + 1 ) *32 ] ).decode("utf-8").lower()
+    return data[ int( i ) ]
 
 def uint64_from_bytes(byte_array):
     return struct.unpack(">Q", byte_array)[0]
 
 def raw_keys_to_string_keys( keys ):
-    string_keys = []
-    offset = 0
-
-    while ( offset < len( keys ) ):
-        size = uint64_from_bytes( keys[offset:offset+8] )
-        offset += 8
-        string_keys.append( str( keys[offset:offset+size] ) )
-        offset += size
-
-    return string_keys
+    res = keys[1:-1].split('\0')
+    return res
 
 def upper_bound( keys, key ):
     for i in range( 0, len( keys ) ):
@@ -117,32 +153,31 @@ def bptree_get_string_key_good_style( is_odd, curr_level_data, keys_data, key ):
     if is_odd:
         return bptree_get_string_key_good_style.remote( False, curr_level_data, get_object( get_entry( curr_level_data, 0 ) ), key )
     else:
-        isleaf = keys_data[0] == 1
-        keys_data = keys_data[1:]
+        isleaf = ( str.encode(keys_data[0] ) == b'\x01' )
         string_keys = raw_keys_to_string_keys( keys_data )
         idx = upper_bound( string_keys, key )
 
         if isleaf:
             if ( idx != 0 and string_keys[idx - 1] == key ):
-                return get_object( get_entry( data, idx ) )
+                return get_object( get_entry( curr_level_data, idx ) )
             else:
                 return "Not found"
         else:
-            return bptree_get_string_key_good_style.remote( True, get_object( get_entry( curr_level_data, idx + 1 ) ), "", key, n )
+            return bptree_get_string_key_good_style.remote( True, get_object( get_entry( curr_level_data, idx + 1 ) ), "", key )
 
-bptree_root = os.path.basename( os.readlink( os.path.join( args.fix_path, "labels/" + tree_root_label ) ) ) 
+bptree_root = decode( os.path.basename( os.readlink( os.path.join( args.fix_path, "labels/" + args.tree_root_label ) ) ) )
 
 @ray.remote
 def bptree_get_good_style_collect( bptree_root, key ):
     # psutil.Process().cpu_affinity( [cpuid] )
-    ref = bptree_get_string_key_good_style.remote( True, loader.get_object.remote( bptree_root ), "", key )
+    ref = bptree_get_string_key_good_style.remote( True, get_object( bptree_root ), "", key )
     while ( isinstance( ref, ray._raylet.ObjectRef ) ):
         ref = ray.get( ref )
     return ref
 
 start = time.monotonic()
 for key in key_list:
-    if ( arg.style == "good" ):
+    if ( args.style == "good" ):
         ray.get( bptree_get_good_style_collect.remote( bptree_root, key ) )
     else: 
         ray.get( bptree_get_string_key_bad_style.remote( bptree_root, key ) )

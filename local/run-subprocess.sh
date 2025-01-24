@@ -5,12 +5,12 @@ if [ "$#" -ne 5 ]; then
   exit 1
 fi
 
-for ((i=1; i <=$5; i=i+100))
+for ((i=1; i <=$4; i=i+100))
 do
   for ((j=0; j<5; j++))
   do
     begin_index=$((j * $3))
-    echo "python3 ../cluster/bptree-get-n-subprocess.py $1 $2 $begin_index $3 $4 $i"
-    python3 ../cluster/bptree-get-n-subprocess.py $1 $2 $begin_index $3 $4 $i
+    echo "python3 ../cluster/bptree-get-n-subprocess.py $1 $2 $begin_index $3 $5 $i"
+    python3 ../cluster/bptree-get-n-subprocess.py $1 $2 $begin_index $3 $5 $i
   done
 done

@@ -50,7 +50,7 @@ def load_program_on_demand( program_name, target_executable_name ):
         file.write( binary )
     subprocess.check_call(['chmod', '+x', tmp_path])
 
-    if ( !os.path.exists( binary_path ) ):
+    if ( not os.path.exists( binary_path ) ):
         os.rename( tmp_path, binary_path )
 
     if ( os.path.exists( tmp_path ) ):
@@ -81,7 +81,7 @@ def mapper( mapper_path, needle, index ):
     if not args.ondemand:
         return ray.get( ray_subprocess.remote( mapper_path, json.dumps( input ) ) )
     else:
-        return ray.get( ray_subprocess_on_demand( mapper_path[0], mapper_path[1], json.dumps( input ) ) )
+        return ray.get( ray_subprocess_on_demand.remote( mapper_path[0], mapper_path[1], json.dumps( input ) ) )
 
 def reducer( reducer_path, x, y ):
     input = {
@@ -91,7 +91,7 @@ def reducer( reducer_path, x, y ):
     if not args.ondemand:
         return ray.get( ray_subprocess.remote( reducer_path, json.dumps( input ) ) )
     else:
-        return ray.get( ray_subprocess_on_demand( reducer_path[0], reducer_path[1], json.dumps( input ) ) )
+        return ray.get( ray_subprocess_on_demand.remote( reducer_path[0], reducer_path[1], json.dumps( input ) ) )
 
 @ray.remote
 def mapreduce( mapper_path, reducer_path, needle, start: int, end: int ):
@@ -114,8 +114,8 @@ def load_program_to_every_node( binary_ref, program_name ):
 @ray.remote
 def cleanup(program_path):
     for p in program_path:
-        if os.path.exists( program_path ):
-            subprocess.check_call(['rm', program_path])
+        if os.path.exists( p ):
+            subprocess.check_call(['rm', p])
 
 def cleanup_every_node(program_path):
     refs = []

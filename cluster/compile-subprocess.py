@@ -5,13 +5,14 @@ import json
 import subprocess
 import boto3
 
-parser = argparse.ArgumentParser("bptree-get-ray")
+parser = argparse.ArgumentParser("compile-subprocess")
 parser.add_argument( "program_path", help="", type=str)
 parser.add_argument( "input_bucket", help="Input file bucket name", type=str)
 parser.add_argument( "input_file", help="Input file name", type=str )
 parser.add_argument( "output_bucket", help="output bucket name", type=str )
 parser.add_argument( "minio_port", help="port to minio client", type=int)
 parser.add_argument( "c_file_num", help="Number of c files", type=int )
+parser.add_argument('-d', '--ondemand', action='store_true', help='Enable on demand binary loading')
 args = parser.parse_args()
 
 import ray
@@ -57,10 +58,10 @@ def load_program_on_demand( program_name, target_executable_name ):
         file.write( binary )
     subprocess.check_call(['chmod', '+x', tmp_path])
 
-    if ( !os.path.exists( binary_path ) ):
+    if not os.path.exists( binary_path ):
         os.rename( tmp_path, binary_path )
 
-    if ( os.path.exists( tmp_path ) ):
+    if os.path.exists( tmp_path ):
         subprocess.check_call(['rm', tmp_path])
 
     return binary_path
@@ -93,8 +94,8 @@ def load_program_to_every_node( binary_ref, program_name ):
 @ray.remote
 def cleanup(program_path):
     for p in program_path:
-        if os.path.exists( program_path ):
-            subprocess.check_call(['rm', program_path])
+        if os.path.exists( p ):
+            subprocess.check_call(['rm', p])
 
 def cleanup_every_node(program_path):
     refs = []
@@ -126,7 +127,7 @@ def do_compile():
 
     link_elfs_input = {
             "bucket" : args.output_bucket,
-            "last_index" : wasm_to_c_output["output_number"] - 1,
+            "last_index" : args.c_file_num - 1,
             "output_name" : "out-" + args.input_file,
             "minio_url" : "localhost:" + str( args.minio_port ),
             }
@@ -137,10 +138,14 @@ def do_compile():
 
     return ray.get( get_object_from_minio.remote( args.output_bucket, "out-" + args.input_file ) )
 
+cleanup_every_node(["/home/ubuntu/c-to-elf", "/home/ubuntu/link-elfs"])
+
 start = time.monotonic()
+subprocess.run( ["bash", "/mnt/fix/compile-client/upload-file.sh"] )
 ray.get( do_compile.remote() )
 end = time.monotonic()
 
 print ( end - start )
 
 cleanup_every_node(["/home/ubuntu/c-to-elf", "/home/ubuntu/link-elfs"])
+

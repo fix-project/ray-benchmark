@@ -30,36 +30,6 @@ def decode( handle ):
 def encode( handle ):
     return base64.b16encode( handle ).decode("utf-8").lower()
 
-# Given base16 encoded ValueTreeRef/BlobRef, get the corresponding data
-def get_object( handle ):
-    prefix = encode( handle )[:48]
-    filename = prefix + self.prefix_map[prefix]
-
-    if ( filename.endswith( '400' ) ):
-        with open( os.path.join( args.fix_path, "data/", filename ), 'r') as file:
-            data = file.read()
-        return data
-
-    with open( os.path.join( args.fix_path, "data/", filename ), 'rb') as file:
-        data = file.read()
-
-    handles = []
-    for i in range( 0, len( data ) // 32 ):
-        handles.append( self.to_handle( data[ int(i) * 32: int( i + 1 ) *32 ] ) )
-    return handles
-def get_object( handle ):
-    raw = base64.b16decode( handle.upper() )
-    if raw[30] | 0b11111000 == 0b11111000:
-        size = raw[30] >> 3
-        return raw[:size] 
-
-    prefix = handle[:48]
-    filename = prefix_map[prefix]
-
-    with open( os.path.join( fix_path, "data/", filename ), 'rb') as file:
-        data = file.read()
-        return data
-
 @ray.remote
 class Loader:
     def __init__( self ):
@@ -84,7 +54,16 @@ class Loader:
         return handle
 
     def get_object( self, handle ):
-        prefix = encode( handle )[:48]
+        if handle[30] | 0b11111000 == 0b11111000:
+            size = handle[30] >> 3
+            return handle[:size]
+
+        if handle[:24] == self.empty_tree:
+            return "" 
+
+        handle = encode(handle)
+        
+        prefix = handle[:48]
         filename = prefix + self.prefix_map[prefix]
 
         if ( filename.endswith( '400' ) ):
@@ -94,32 +73,29 @@ class Loader:
 
         with open( os.path.join( args.fix_path, "data/", filename ), 'rb') as file:
             data = file.read()
-
-        handles = []
-        for i in range( 0, len( data ) // 32 ):
-            handles.append( self.to_handle( data[ int(i) * 32: int( i + 1 ) *32 ] ) )
-        return handles
+            return data
 
 # Create an actor
 loader = Loader.remote()
 
-# def get_object( raw ):
-#     if ( isinstance( raw, ray._raylet.ObjectRef ) ):
-#         return raw
-#     else:
-#         return loader.get_object.remote( raw )
+def get_object( raw ):
+    if ( isinstance( raw, ray._raylet.ObjectRef ) ):
+        return raw
+    else:
+        return loader.get_object.remote( raw )
 
 def get_object_deref( raw ):
     return ray.get( get_object( raw ) )
 
 def get_entry( data, i ):
-    return data[ int( i ) ]
+    return data[ int(i) * 32: int( i + 1 ) *32 ]
+    #return data[ int( i ) ]
 
 def uint64_from_bytes(byte_array):
     return struct.unpack(">Q", byte_array)[0]
 
-def raw_keys_to_string_keys( keys ):
-    res = keys[1:-1].split('\0')
+def raw_keys_to_string_keys( keys, begin_idx ):
+    res = keys[begin_idx:-1].split('\0')
     return res
 
 def upper_bound( keys, key ):
@@ -135,9 +111,14 @@ def bptree_get_string_key_bad_style( root, key ):
     while True:
         data = get_object_deref( curr_level )
         keys = get_object_deref( get_entry( data, 0 ) )
-        isleaf = keys[0] == 1
-        keys = keys[1:]
-        string_keys = raw_keys_to_string_keys( keys )
+
+        if ( isinstance( keys, bytes ) ):
+            isleaf = ( keys[0] == b'\x01' )
+            string_keys = raw_keys_to_string_keys( keys[1:].decode("utf-8"), 0 )
+        else:
+            isleaf = ( str.encode(keys[0]) == b'\x01' )
+            string_keys = raw_keys_to_string_keys( keys, 1 )
+
         idx = upper_bound( string_keys, key )
 
         if isleaf:
@@ -153,10 +134,14 @@ def bptree_get_string_key_good_style( is_odd, curr_level_data, keys_data, key ):
     if is_odd:
         return bptree_get_string_key_good_style.remote( False, curr_level_data, get_object( get_entry( curr_level_data, 0 ) ), key )
     else:
-        isleaf = ( str.encode(keys_data[0] ) == b'\x01' )
-        string_keys = raw_keys_to_string_keys( keys_data )
-        idx = upper_bound( string_keys, key )
+        if ( isinstance( keys_data, bytes ) ):
+            isleaf = ( keys_data[0] == b'\x01' )
+            string_keys = raw_keys_to_string_keys( keys_data[1:].decode("utf-8"), 0 )
+        else:
+            isleaf = ( str.encode(keys_data[0]) == b'\x01' )
+            string_keys = raw_keys_to_string_keys( keys_data, 1 )
 
+        idx = upper_bound( string_keys, key )
         if isleaf:
             if ( idx != 0 and string_keys[idx - 1] == key ):
                 return get_object( get_entry( curr_level_data, idx ) )
@@ -176,11 +161,13 @@ def bptree_get_good_style_collect( bptree_root, key ):
     return ref
 
 start = time.monotonic()
+
 for key in key_list:
     if ( args.style == "good" ):
         ray.get( bptree_get_good_style_collect.remote( bptree_root, key ) )
     else: 
         ray.get( bptree_get_string_key_bad_style.remote( bptree_root, key ) )
+
 end = time.monotonic()
 
 print( end - start )

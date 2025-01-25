@@ -99,10 +99,17 @@ def raw_keys_to_string_keys( keys, begin_idx ):
     return res
 
 def upper_bound( keys, key ):
-    for i in range( 0, len( keys ) ):
-        if keys[i] > key:
-            return i
-    return len( keys )
+    low, high = 0, len(keys) - 1
+    closest_larger_index = len(keys)
+
+    while low <= high:
+        mid = (low + high) // 2
+        if keys[mid] > key:
+            closest_larger_index = mid
+            high = mid - 1
+        else:
+            low = mid + 1
+    return closest_larger_index
 
 @ray.remote
 def bptree_get_string_key_bad_style( root, key ):

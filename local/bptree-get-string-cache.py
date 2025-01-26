@@ -40,37 +40,42 @@ class Loader:
         self.empty_tree = decode( "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7" )
         self.empty_ref = ray.put( "" )
         self.refs = []
+        
+        self.cache = {}
 
     def get_object( self, handle ):
+        if ( handle in self.cache ):
+            return self.cache[handle]
+
         if handle[30] | 0b11111000 == 0b11111000:
             size = handle[30] >> 3
-            return handle[:size]
+            self.cache[handle] = ray.put( handle[:size] )
+            return self.cache[handle]
 
         if handle[:24] == self.empty_tree:
             return "" 
 
-        handle = encode(handle)
+        encoded_handle = encode(handle)
         
-        prefix = handle[:48]
+        prefix = encoded_handle[:48]
         filename = prefix + self.prefix_map[prefix]
 
         if ( filename.endswith( '400' ) ):
             with open( os.path.join( args.fix_path, "data/", filename ), 'r') as file:
                 data = file.read()
-            return data
+            self.cache[handle] = ray.put( data )
+            return self.cache[handle]
 
         with open( os.path.join( args.fix_path, "data/", filename ), 'rb') as file:
             data = file.read()
-            return data
+        self.cache[handle] = ray.put( data )
+        return self.cache[handle]
 
 # Create an actor
 loader = Loader.remote()
 
 def get_object( raw ):
-    if ( isinstance( raw, ray._raylet.ObjectRef ) ):
-        return raw
-    else:
-        return loader.get_object.remote( raw )
+    return ray.get( loader.get_object.remote( raw ) )
 
 def get_object_deref( raw ):
     return ray.get( get_object( raw ) )

@@ -2,6 +2,7 @@ import base64
 import argparse
 import os
 import time 
+import subprocess
 
 parser = argparse.ArgumentParser("bptree-get-ray")
 parser.add_argument("style", help="bptree style", type=str)
@@ -35,43 +36,30 @@ def encode( handle ):
     return base64.b16encode( handle ).decode("utf-8").lower()
 
 @ray.remote
-class Loader:
-    def __init__( self ):
-        return
+def get_keys():
+    key_list = []
+    for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
+        key_list.append( filename )
+    return key_list
 
-    def get_object( self, handle ):
-        filename = encode( handle )
-
-        with open( os.path.join( fix_path, "data/", filename ), 'rb' ) as file:
-            data = file.read()
-        return data
-
-    # Return list of prefixes that are at this loader
-    def keys( self ):
-        key_list = []
-        for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
-            key_list.append( filename )
-        return key_list
-
-loaders = []
-loader_index = 0;
-key_to_loader_map = {}
+key_to_node_map = {}
 for node in nodes:
-    loader = Loader.options(resources={ node : 0.0001 }).remote()
-    keys = ray.get( loader.keys.remote() )
+    keys = ray.get( get_keys.options(resources={ node : 0.0001 }).remote() )
     for key in keys:
         raw = decode( key )
-        key_to_loader_map[raw[:4]] = loader_index
-    loaders.append( loader )
-    loader_index += 1
+        key_to_node_map[raw[:4]] = node
 
-def get_object( raw, key_to_loader_map ):
-    if raw[:4] in key_to_loader_map:
-        loader_index = key_to_loader_map[raw[:4]]
-        return loaders[loader_index].get_object.remote( raw )
-    else:
-        local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
-        return loaders[local_loader_index].get_object.remote( raw )
+@ray.remote(num_cpus=0)
+def get_object_direct_remote( raw ):
+    filename = encode( raw )
+
+    with open( os.path.join( fix_path, "data/", filename ), 'rb' ) as file:
+        data = file.read()
+    return data
+
+def get_object_direct( raw, key_to_node_map ):
+    node = key_to_node_map[raw[:4]]
+    return get_object_direct_remote.options(resources={ node: 0.0001 }).remote( raw )
 
 @ray.remote
 def count_words(needle: bytes, haystack: bytes) -> int:
@@ -83,7 +71,7 @@ def merge_counts(x, y):
     return x + y
 
 def mapper_good_style( needle, handle ):
-    return count_words.remote( needle, get_object( decode( handle ), key_to_loader_map ) )
+    return count_words.remote( needle, get_object_direct( decode( handle ), key_to_node_map ) )
 
 @ray.remote
 def reducer_good_style( x, y ):
@@ -93,25 +81,24 @@ def reducer_good_style( x, y ):
         return merge_counts.remote( x, y )
 
 def mapper_bad_style( needle, handle ):
-    chunk = ray.get( get_object( decode( handle ), key_to_loader_map ) )
+    chunk = ray.get( get_object_direct( decode( handle ), key_to_node_map ) )
     return ray.get( count_words.remote( needle, chunk ) )
 
 def reducer_bad_style( x, y ):
     return ray.get( merge_counts.remote( x, y ) )
 
-@ray.remote
 def mapreduce_good_style( needle, chunk_list, start: int, end: int ):
     if ( start == end or start == end - 1 ):
         return mapper_good_style( needle, chunk_list[start] )
     else:
         split = start + ( end - start ) // 2
-        first = mapreduce_good_style.remote( needle, chunk_list, start, split )
-        second = mapreduce_good_style.remote( needle, chunk_list, split, end )
+        first = mapreduce_good_style( needle, chunk_list, start, split )
+        second = mapreduce_good_style( needle, chunk_list, split, end )
         return reducer_good_style.remote( first, second )
 
 @ray.remote
 def mapreduce_good_style_collect( needle, chunk_list ):
-    ref = mapreduce_good_style.remote( needle, chunk_list, 0, len( chunk_list ) )
+    ref = mapreduce_good_style( needle, chunk_list, 0, len( chunk_list ) )
     while ( isinstance( ref, ray._raylet.ObjectRef ) ):
         ref = ray.get( ref )
     return ref
@@ -129,10 +116,12 @@ def mapreduce_bad_style( needle, chunk_list, start: int, end: int ):
         return reducer_bad_style( x, y )
 
 
+subprocess.run( ["bash", "/mnt/fix/count-words/run-exp.sh"] )
 start = time.monotonic()
 if ( args.style == "good" ):
     print( ray.get( mapreduce_good_style_collect.remote( str.encode( args.needle ), chunk_list ) ) )
 else:
     print( ray.get( mapreduce_bad_style.remote( str.encode( args.needle ), chunk_list, 0, len( chunk_list ) ) ) )
 end = time.monotonic()
+subprocess.run( ["bash", "/mnt/fix/count-words/run-exp.sh"] )
 print( end - start )

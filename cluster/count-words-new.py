@@ -35,49 +35,22 @@ def encode( handle ):
     return base64.b16encode( handle ).decode("utf-8").lower()
 
 @ray.remote
-class Loader:
-    def __init__( self ):
-        return
+def get_keys():
+    key_list = []
+    for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
+        key_list.append( filename )
+    return key_list
 
-    def get_object( self, handle ):
-        filename = encode( handle )
-
-        with open( os.path.join( fix_path, "data/", filename ), 'rb' ) as file:
-            data = file.read()
-        return data
-
-    # Return list of prefixes that are at this loader
-    def keys( self ):
-        key_list = []
-        for filename in os.listdir( os.path.join( fix_path, "data/" ) ):
-            key_list.append( filename )
-        return key_list
-
-loaders = []
-loader_index = 0;
-key_to_loader_map = {}
 key_to_node_map = {}
 for node in nodes:
-    loader = Loader.options(resources={ node : 0.0001 }).remote()
-    keys = ray.get( loader.keys.remote() )
+    keys = ray.get( get_keys.options(resources={ node : 0.0001 }).remote() )
     for key in keys:
         raw = decode( key )
-        key_to_loader_map[raw[:4]] = loader_index
         key_to_node_map[raw[:4]] = node
-    loaders.append( loader )
-    loader_index += 1
 
-def get_object( raw, key_to_loader_map ):
-    if raw[:4] in key_to_loader_map:
-        loader_index = key_to_loader_map[raw[:4]]
-        return loaders[loader_index].get_object.remote( raw )
-    else:
-        local_loader_index = nodes.index( "node:" + ray._private.services.get_node_ip_address() )
-        return loaders[local_loader_index].get_object.remote( raw )
-
-@ray.remote
+@ray.remote(num_cpus=0)
 def get_object_direct_remote( raw ):
-    filename = encode( handle )
+    filename = encode( raw )
 
     with open( os.path.join( fix_path, "data/", filename ), 'rb' ) as file:
         data = file.read()
@@ -113,19 +86,18 @@ def mapper_bad_style( needle, handle ):
 def reducer_bad_style( x, y ):
     return ray.get( merge_counts.remote( x, y ) )
 
-@ray.remote
 def mapreduce_good_style( needle, chunk_list, start: int, end: int ):
     if ( start == end or start == end - 1 ):
         return mapper_good_style( needle, chunk_list[start] )
     else:
         split = start + ( end - start ) // 2
-        first = mapreduce_good_style.remote( needle, chunk_list, start, split )
-        second = mapreduce_good_style.remote( needle, chunk_list, split, end )
+        first = mapreduce_good_style( needle, chunk_list, start, split )
+        second = mapreduce_good_style( needle, chunk_list, split, end )
         return reducer_good_style.remote( first, second )
 
 @ray.remote
 def mapreduce_good_style_collect( needle, chunk_list ):
-    ref = mapreduce_good_style.remote( needle, chunk_list, 0, len( chunk_list ) )
+    ref = mapreduce_good_style( needle, chunk_list, 0, len( chunk_list ) )
     while ( isinstance( ref, ray._raylet.ObjectRef ) ):
         ref = ray.get( ref )
     return ref

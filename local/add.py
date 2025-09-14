@@ -24,6 +24,6 @@ def do_exp():
         ray.get( add.remote( addends[i][0], addends[i][1] ) )
     end = time.monotonic()
 
-    print( ( end - start ) * 1_000_000_000, "ns" )
+    print( ( end - start ) * 1_000, "ms" )
 
 ray.get( do_exp.remote() )

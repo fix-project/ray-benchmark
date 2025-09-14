@@ -145,7 +145,7 @@ subprocess.run( ["bash", "/mnt/fix/compile-client/upload-file.sh"] )
 ray.get( do_compile.remote() )
 end = time.monotonic()
 
-print ( end - start )
+print ( "Duration:", end - start, "s" )
 
 cleanup_every_node(["/home/ubuntu/c-to-elf", "/home/ubuntu/link-elfs"])
 

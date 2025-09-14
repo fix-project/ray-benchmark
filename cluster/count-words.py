@@ -116,12 +116,12 @@ def mapreduce_bad_style( needle, chunk_list, start: int, end: int ):
         return reducer_bad_style( x, y )
 
 
-subprocess.run( ["bash", "/mnt/fix/count-words/run-exp.sh"] )
+#subprocess.run( ["bash", "/mnt/fix/count-words/run-exp.sh"] )
 start = time.monotonic()
 if ( args.style == "good" ):
     print( ray.get( mapreduce_good_style_collect.remote( str.encode( args.needle ), chunk_list ) ) )
 else:
     print( ray.get( mapreduce_bad_style.remote( str.encode( args.needle ), chunk_list, 0, len( chunk_list ) ) ) )
 end = time.monotonic()
-subprocess.run( ["bash", "/mnt/fix/count-words/run-exp.sh"] )
-print( end - start )
+#subprocess.run( ["bash", "/mnt/fix/count-words/run-exp.sh"] )
+print( "Duration:", end - start, "s" )

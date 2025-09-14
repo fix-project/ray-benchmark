@@ -7,7 +7,7 @@ parser.add_argument("num_of_calls", help="number of callskey to lookup", type=in
 parser.add_argument("ray_address", help="address of ray", type=str)
 args = parser.parse_args()
 
-ray.init("ray://" + args.ray_address )
+ray.init("ray://" + args.ray_address + ":10001")
 
 @ray.remote
 def inc( input ):
@@ -23,4 +23,4 @@ ray.get( ref )
 
 end = time.monotonic()
 
-print( end - start )
+print( end - start, "s" )

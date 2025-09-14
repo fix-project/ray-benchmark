@@ -165,4 +165,4 @@ for key in key_list:
 
 end = time.monotonic()
 
-print( end - start )
+print( end - start, "s" )
